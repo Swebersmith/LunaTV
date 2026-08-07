@@ -11,6 +11,11 @@
 # next.js
 /.next/
 /out/
+/.open-next/
+
+# next-pwa generated files
+/public/sw.js
+/public/workbox-*.js
 
 # production
 /build
