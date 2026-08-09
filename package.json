@@ -17,7 +17,7 @@
     "gen:manifest": "node scripts/generate-manifest.js",
     "postbuild": "echo 'Build completed - sitemap generation disabled'",
     "cf:build": "opennextjs-cloudflare build",
-    "cf:deploy": "pnpm cf:build && wrangler deploy",
+    "cf:deploy": "pnpm cf:build && wrangler deploy --keep-vars",
     "prepare": "husky install"
   },
   "dependencies": {

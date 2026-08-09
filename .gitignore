@@ -12,6 +12,7 @@
 /.next/
 /out/
 /.open-next/
+/.wrangler/
 
 # next-pwa generated files
 /public/sw.js
