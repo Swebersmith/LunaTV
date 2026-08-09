@@ -7,5 +7,11 @@
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
-  }
+  },
+  "kv_namespaces": [
+    {
+      "binding": "LUNATV_KV",
+      "id": "b56b9fe1d9f64c02bcc4098598b45d7b"
+    }
+  ]
 }
