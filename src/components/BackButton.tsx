@@ -1,14 +1,16 @@
 'use client';
 
 import { ArrowLeft } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 export function BackButton() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get('returnTo');
 
   const handleBack = () => {
-    if (window.history.length > 1) {
-      router.back();
+    if (returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')) {
+      router.push(returnTo);
       return;
     }
 

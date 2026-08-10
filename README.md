@@ -13,6 +13,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-4.x-3178c6?logo=typescript)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Docker Ready](https://img.shields.io/badge/Docker-ready-blue?logo=docker)
+![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-f38020?logo=cloudflare&logoColor=white)
 
 </div>
 
@@ -23,7 +24,7 @@
 - 🔍 **多源聚合搜索**：一次搜索立刻返回全源结果。
 - 📄 **丰富详情页**：支持剧集列表、演员、年份、简介等完整信息展示。
 - ▶️ **流畅在线播放**：集成 HLS.js & ArtPlayer。
-- ❤️ **收藏 + 继续观看**：支持 Kvrocks/Redis/Upstash 存储，多端同步进度。
+- ❤️ **收藏 + 继续观看**：支持 Kvrocks/Redis/Upstash/Cloudflare KV 存储，多端同步进度。
 - 📱 **PWA**：离线缓存、安装到桌面/主屏，移动端原生体验。
 - 🌗 **响应式布局**：桌面侧边栏 + 移动底部导航，自适应各种屏幕尺寸。
 - 👿 **智能去广告**：自动跳过视频中的切片广告（实验性）。
@@ -44,6 +45,7 @@
 - [技术栈](#技术栈)
 - [部署](#部署)
   - [一键部署](#zeabur-一键部署)
+  - [Cloudflare Workers + KV](#cloudflare-workers--kv当前生产部署)
   - [Docker 部署](#Kvrocks-存储推荐)
 - [配置文件](#配置文件)
 - [订阅](#订阅)
@@ -65,11 +67,38 @@
 | 语言      | TypeScript 4                                                                                          |
 | 播放器    | [ArtPlayer](https://github.com/zhw2590582/ArtPlayer) · [HLS.js](https://github.com/video-dev/hls.js/) |
 | 代码质量  | ESLint · Prettier · Jest                                                                              |
-| 部署      | Docker                                                                    |
+| 部署      | Docker · Cloudflare Workers                                               |
 
 ## 部署
 
-本项目**仅支持 Docker 或其他基于 Docker 的平台** 部署。
+本项目支持 **Docker 平台** 和 **Cloudflare Workers** 部署。
+
+### Cloudflare Workers + KV（当前生产部署）
+
+当前生产实例由 Cloudflare Workers Builds 从 GitHub 仓库
+[`Swebersmith/LunaTV`](https://github.com/Swebersmith/LunaTV) 的 `main` 分支自动构建和发布。
+每次推送到 `main` 都会触发一次新的 Workers 部署。
+
+Cloudflare 中的构建与运行配置如下：
+
+- Worker 名称：`lunatv`
+- 构建命令：`pnpm cf:build`
+- 手动部署命令：`pnpm exec wrangler deploy --keep-vars`
+- KV 命名空间：`lunatv`
+- KV 绑定名称：`LUNATV_KV`
+- 管理面板：`/admin`
+
+在 Worker 的 **Settings > Variables and Secrets** 中为 Production 配置以下变量：
+
+```env
+NEXT_PUBLIC_STORAGE_TYPE=cloudflare-kv
+USERNAME=admin
+PASSWORD=replace-with-a-strong-secret
+```
+
+`PASSWORD` 必须以 Secret 形式保存。`USERNAME` 可以改为自己的管理员账号。
+创建或迁移到其他 Cloudflare 账号时，需要在 `wrangler.jsonc` 中将 `LUNATV_KV`
+绑定到该账号中的 KV 命名空间；不要将密码、Token 或个人域名提交到仓库。
 
 ### zeabur 一键部署
 
@@ -329,7 +358,8 @@ dockge/komodo 等 docker compose UI 也有自动更新功能
 | SITE_BASE                           | 站点 url              |       形如 https://example.com                  | 空                                                                                                                     |
 | NEXT_PUBLIC_SITE_NAME               | 站点名称                                     | 任意字符串                       | MoonTV                                                                                                                     |
 | ANNOUNCEMENT                        | 站点公告                                     | 任意字符串                       | 本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。 |
-| NEXT_PUBLIC_STORAGE_TYPE            | 播放记录/收藏的存储方式                      | redis、kvrocks、upstash | 无默认，必填字段                                                                                                               |
+| NEXT_PUBLIC_STORAGE_TYPE            | 播放记录/收藏的存储方式                      | redis、kvrocks、upstash、cloudflare-kv | 默认 localstorage；Cloudflare 部署使用 cloudflare-kv                                                                        |
+| LUNATV_KV                           | Cloudflare Workers KV 资源绑定               | KV binding 名称                    | 空；使用 cloudflare-kv 时必须绑定到 KV 命名空间                                                                              |
 | KVROCKS_URL                           | kvrocks 连接 url                               | 连接 url                         | 空                                                                                                                         |
 | REDIS_URL                           | redis 连接 url                               | 连接 url                         | 空                                                                                                                         |
 | UPSTASH_URL                         | upstash redis 连接 url                       | 连接 url                         | 空                                                                                                                         |
