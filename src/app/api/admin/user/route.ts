@@ -59,7 +59,10 @@ export async function POST(request: NextRequest) {
     }
 
     // 用户组操作和批量操作不需要targetUsername
-    if (!targetUsername && !['userGroup', 'batchUpdateUserGroups'].includes(action)) {
+    if (
+      !['userGroup', 'batchUpdateUserGroups'].includes(action) &&
+      (typeof targetUsername !== 'string' || !targetUsername.trim())
+    ) {
       return NextResponse.json({ error: '缺少目标用户名' }, { status: 400 });
     }
 

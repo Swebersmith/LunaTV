@@ -236,16 +236,18 @@ async function getInitConfig(configFile: string, subConfig: {
   } catch (e) {
     console.error('获取用户列表失败:', e);
   }
-  const allUsers = userNames.filter((u) => u !== process.env.USERNAME).map((u) => ({
+  const allUsers = userNames.filter((u) => typeof u === 'string' && u.trim() && u !== process.env.USERNAME).map((u) => ({
     username: u,
     role: 'user',
     banned: false,
   }));
-  allUsers.unshift({
-    username: process.env.USERNAME!,
-    role: 'owner',
-    banned: false,
-  });
+  if (process.env.USERNAME?.trim()) {
+    allUsers.unshift({
+      username: process.env.USERNAME,
+      role: 'owner',
+      banned: false,
+    });
+  }
   adminConfig.UserConfig.Users = allUsers as any;
 
   // 从配置文件中补充源信息
@@ -337,9 +339,12 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   // 站长变更自检
   const ownerUser = process.env.USERNAME;
 
-  // 去重
+  // 清理历史空白用户并去重，不修改有效用户名或用户权限配置。
   const seenUsernames = new Set<string>();
   adminConfig.UserConfig.Users = adminConfig.UserConfig.Users.filter((user) => {
+    if (!user || typeof user.username !== 'string' || !user.username.trim()) {
+      return false;
+    }
     if (seenUsernames.has(user.username)) {
       return false;
     }
@@ -356,13 +361,15 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
     }
   });
   // 重新添加回站长
-  adminConfig.UserConfig.Users.unshift({
-    username: ownerUser!,
-    role: 'owner',
-    banned: false,
-    enabledApis: originOwnerCfg?.enabledApis || undefined,
-    tags: originOwnerCfg?.tags || undefined,
-  });
+  if (ownerUser?.trim()) {
+    adminConfig.UserConfig.Users.unshift({
+      username: ownerUser,
+      role: 'owner',
+      banned: false,
+      enabledApis: originOwnerCfg?.enabledApis || undefined,
+      tags: originOwnerCfg?.tags || undefined,
+    });
+  }
 
   // 采集源去重
   const seenSourceKeys = new Set<string>();
