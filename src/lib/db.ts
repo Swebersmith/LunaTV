@@ -10,8 +10,8 @@ import { Favorite, IStorage, PlayRecord, SkipConfig } from './types';
 import { UpstashRedisStorage } from './upstash.db';
 
 // 创建存储实例
-function createStorage(): IStorage {
-  switch (getStorageType()) {
+function createStorage(storageType: string): IStorage {
+  switch (storageType) {
     case 'redis':
       return new RedisStorage();
     case 'upstash':
@@ -32,10 +32,13 @@ function createStorage(): IStorage {
 
 // 单例存储实例
 let storageInstance: IStorage | null = null;
+let storageInstanceType: string | undefined;
 
 function getStorage(): IStorage {
-  if (!storageInstance) {
-    storageInstance = createStorage();
+  const storageType = getStorageType();
+  if (!storageInstance || storageInstanceType !== storageType) {
+    storageInstance = createStorage(storageType);
+    storageInstanceType = storageType;
   }
   return storageInstance;
 }
@@ -47,19 +50,23 @@ export function generateStorageKey(source: string, id: string): string {
 
 // 导出便捷方法
 export class DbManager {
-  private storage: IStorage;
+  // Cloudflare may supply private variables after this module is imported.
+  // Resolve the adapter when used rather than pinning the build-time fallback.
+  private get storage(): IStorage {
+    return getStorage();
+  }
   private migrationPromise: Promise<void> | null = null;
 
   constructor() {
-    this.storage = getStorage();
+    const storage = getStorage();
     // 启动时自动触发数据迁移（异步，不阻塞构造）
-    if (this.storage && typeof this.storage.migrateData === 'function') {
-      this.migrationPromise = this.storage
+    if (storage && typeof storage.migrateData === 'function') {
+      this.migrationPromise = storage
         .migrateData()
         .then(async () => {
           // 数据结构迁移完成后，执行密码哈希迁移
-          if (typeof this.storage.migratePasswords === 'function') {
-            await this.storage.migratePasswords();
+          if (typeof storage.migratePasswords === 'function') {
+            await storage.migratePasswords();
           }
         })
         .catch((err) => {
