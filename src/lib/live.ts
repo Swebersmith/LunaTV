@@ -1,8 +1,11 @@
 /* eslint-disable no-constant-condition */
 
-import { getConfig } from "@/lib/config";
+import { decode } from 'he';
 
-const defaultUA = 'AptvPlayer/1.4.10'
+import { getConfig } from '@/lib/config';
+import { fetchLiveUpstream, readLiveText } from '@/lib/live-proxy';
+
+const defaultUA = 'AptvPlayer/1.4.10';
 
 export interface LiveChannels {
   channelNumber: number;
@@ -25,19 +28,34 @@ export interface LiveChannels {
 }
 
 const cachedLiveChannels: { [key: string]: LiveChannels } = {};
+const cachedAt: Record<string, number> = {};
+const epgCachedAt: Record<string, number> = {};
 const cachedFingerprints: { [key: string]: string } = {};
-const liveFingerprint = (source: { url: string; ua?: string; epg?: string }) => JSON.stringify([source.url, source.ua || '', source.epg || '']);
+const liveFingerprint = (source: { url: string; ua?: string; epg?: string }) =>
+  JSON.stringify([source.url, source.ua || '', source.epg || '']);
 
 export function deleteCachedLiveChannels(key: string) {
   delete cachedLiveChannels[key];
   delete cachedFingerprints[key];
+  delete cachedAt[key];
+  delete epgCachedAt[key];
 }
 
-export async function getCachedLiveChannels(key: string): Promise<LiveChannels | null> {
+export async function getCachedLiveChannels(
+  key: string,
+  force = false
+): Promise<LiveChannels | null> {
   const config = await getConfig();
-  const liveInfo = config.LiveConfig?.find(live => live.key === key && !live.disabled);
+  const liveInfo = config.LiveConfig?.find(
+    (live) => live.key === key && !live.disabled
+  );
   if (!liveInfo) return null;
-  if (!cachedLiveChannels[key] || cachedFingerprints[key] !== liveFingerprint(liveInfo)) {
+  if (
+    force ||
+    !cachedLiveChannels[key] ||
+    cachedFingerprints[key] !== liveFingerprint(liveInfo) ||
+    Date.now() - (cachedAt[key] || 0) > 5 * 60 * 1000
+  ) {
     const channelNum = await refreshLiveChannels(liveInfo);
     if (channelNum === 0) {
       return null;
@@ -56,131 +74,107 @@ export async function refreshLiveChannels(liveInfo: {
   channelNumber?: number;
   disabled?: boolean;
 }): Promise<number> {
-  if (cachedLiveChannels[liveInfo.key]) {
-    delete cachedLiveChannels[liveInfo.key];
-  }
-  const ua = liveInfo.ua || defaultUA;
-  const response = await fetch(liveInfo.url, {
-    signal: AbortSignal.timeout(15000),
-    headers: {
-      'User-Agent': ua,
-    },
-  });
-  if (!response.ok) throw new Error(`直播源请求失败：${response.status}`);
-  const data = await response.text();
-  const result = parseM3U(liveInfo.key, data);
+  const response = await fetchLiveUpstream(
+    liveInfo.url,
+    liveInfo.ua || defaultUA
+  );
+  const data = await readLiveText(response, 8 * 1024 * 1024);
+  if (!data.trimStart().startsWith('#EXTM3U'))
+    throw new Error('直播源未返回有效的 M3U 频道列表');
+  const result = parseM3U(liveInfo.key, data, response.url || liveInfo.url);
   const epgUrl = liveInfo.epg || result.tvgUrl;
-  const epgs = await parseEpg(epgUrl, liveInfo.ua || defaultUA, result.channels.map(channel => channel.tvgId).filter(tvgId => tvgId));
   cachedLiveChannels[liveInfo.key] = {
     channelNumber: result.channels.length,
     channels: result.channels,
-    epgUrl: epgUrl,
-    epgs: epgs,
+    epgUrl,
+    epgs: {},
   };
+  cachedAt[liveInfo.key] = Date.now();
+  delete epgCachedAt[liveInfo.key];
   cachedFingerprints[liveInfo.key] = liveFingerprint(liveInfo);
   return result.channels.length;
 }
 
-async function parseEpg(epgUrl: string, ua: string, tvgIds: string[]): Promise<{
-  [key: string]: {
-    start: string;
-    end: string;
-    title: string;
-  }[]
-}> {
-  if (!epgUrl) {
-    return {};
+// EPG is optional: fetch it only on the separate EPG request, after playback starts.
+export async function getLiveEpg(key: string) {
+  const channelData = await getCachedLiveChannels(key);
+  if (!channelData || !channelData.epgUrl) return channelData;
+  if (Date.now() - (epgCachedAt[key] || 0) < 10 * 60 * 1000) return channelData;
+  const config = await getConfig();
+  const live = config.LiveConfig?.find(
+    (item) => item.key === key && !item.disabled
+  );
+  if (!live) return null;
+  const epgs = await parseEpg(
+    channelData.epgUrl,
+    live.ua || defaultUA,
+    channelData.channels.map((channel) => channel.tvgId)
+  );
+  if (cachedLiveChannels[key] === channelData) {
+    channelData.epgs = epgs;
+    epgCachedAt[key] = Date.now();
   }
+  return channelData;
+}
 
-  const tvgs = new Set(tvgIds);
-  const result: { [key: string]: { start: string; end: string; title: string }[] } = {};
-
+async function parseEpg(
+  epgUrl: string,
+  ua: string,
+  tvgIds: string[]
+): Promise<LiveChannels['epgs']> {
+  const result: LiveChannels['epgs'] = {};
+  const ids = new Set(tvgIds);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const response = await fetch(epgUrl, {
-      signal: AbortSignal.timeout(15000),
-      headers: {
-        'User-Agent': ua,
-      },
-    });
-    if (!response.ok) {
-      return {};
-    }
-
-    // 使用 ReadableStream 逐行处理，避免将整个文件加载到内存
-    const reader = response.body?.getReader();
-    if (!reader) {
-      return {};
-    }
-
+    const response = await fetchLiveUpstream(epgUrl, ua);
+    reader = response.body?.getReader();
+    if (!reader) return result;
+    timer = setTimeout(() => {
+      void reader?.cancel().catch(() => undefined);
+    }, 15000);
     const decoder = new TextDecoder();
     let buffer = '';
-    let currentTvgId = '';
-    let currentProgram: { start: string; end: string; title: string } | null = null;
-    let shouldSkipCurrentProgram = false;
-
+    let bytes = 0;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
+      bytes += value.byteLength;
+      if (bytes > 32 * 1024 * 1024) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-
-      // 保留最后一行（可能不完整）
-      buffer = lines.pop() || '';
-
-      // 处理完整的行
-      for (const line of lines) {
-        const trimmedLine = line.trim();
-        if (!trimmedLine) continue;
-
-        // 解析 <programme> 标签
-        if (trimmedLine.startsWith('<programme')) {
-          // 提取 tvg-id
-          const tvgIdMatch = trimmedLine.match(/channel="([^"]*)"/);
-          currentTvgId = tvgIdMatch ? tvgIdMatch[1] : '';
-
-          // 提取开始时间
-          const startMatch = trimmedLine.match(/start="([^"]*)"/);
-          const start = startMatch ? startMatch[1] : '';
-
-          // 提取结束时间
-          const endMatch = trimmedLine.match(/stop="([^"]*)"/);
-          const end = endMatch ? endMatch[1] : '';
-
-          if (currentTvgId && start && end) {
-            currentProgram = { start, end, title: '' };
-            // 优化：如果当前频道不在我们关注的列表中，标记为跳过
-            shouldSkipCurrentProgram = !tvgs.has(currentTvgId);
-          }
-        }
-        // 解析 <title> 标签 - 只有在需要解析当前节目时才处理
-        else if (trimmedLine.startsWith('<title') && currentProgram && !shouldSkipCurrentProgram) {
-          // 处理带有语言属性的title标签，如 <title lang="zh">远方的家2025-60</title>
-          const titleMatch = trimmedLine.match(/<title(?:\s+[^>]*)?>(.*?)<\/title>/);
-          if (titleMatch && currentProgram) {
-            currentProgram.title = titleMatch[1];
-
-            // 保存节目信息（这里不需要再检查tvgs.has，因为shouldSkipCurrentProgram已经确保了相关性）
-            if (!result[currentTvgId]) {
-              result[currentTvgId] = [];
-            }
-            result[currentTvgId].push({ ...currentProgram });
-
-            currentProgram = null;
-          }
-        }
-        // 处理 </programme> 标签
-        else if (trimmedLine === '</programme>') {
-          currentProgram = null;
-          currentTvgId = '';
-          shouldSkipCurrentProgram = false; // 重置跳过标志
+      let match: RegExpExecArray | null;
+      const programme = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/g;
+      let consumed = 0;
+      while ((match = programme.exec(buffer))) {
+        consumed = programme.lastIndex;
+        const id = decode(
+          match[1].match(/channel=["']([^"']+)["']/)?.[1] || ''
+        );
+        if (!ids.has(id)) continue;
+        const start = match[1].match(/start=["']([^"']+)["']/)?.[1];
+        const end = match[1].match(/stop=["']([^"']+)["']/)?.[1];
+        const title = match[2].match(/<title\b[^>]*>([\s\S]*?)<\/title>/)?.[1];
+        if (start && end && title) {
+          if (!result[id]) result[id] = [];
+          if (result[id].length < 2000)
+            result[id].push({
+              start,
+              end,
+              title: decode(title.replace(/<[^>]*>/g, '')),
+            });
         }
       }
+      buffer = buffer.slice(consumed);
+      // Malformed XML must not accumulate an unbounded buffer.
+      if (buffer.length > 512 * 1024) break;
     }
-  } catch (error) {
-    // ignore
+  } catch {
+    /* A missing programme guide must never prevent watching a channel. */
+  } finally {
+    clearTimeout(timer);
+    await reader?.cancel().catch(() => undefined);
+    reader?.releaseLock();
   }
-
   return result;
 }
 
@@ -189,7 +183,11 @@ async function parseEpg(epgUrl: string, ua: string, tvgIds: string[]): Promise<{
  * @param m3uContent M3U文件的内容字符串
  * @returns 频道信息数组
  */
-function parseM3U(sourceKey: string, m3uContent: string): {
+export function parseM3U(
+  sourceKey: string,
+  m3uContent: string,
+  playlistUrl = ''
+): {
   tvgUrl: string;
   channels: {
     id: string;
@@ -200,6 +198,14 @@ function parseM3U(sourceKey: string, m3uContent: string): {
     url: string;
   }[];
 } {
+  const absolute = (value: string) => {
+    if (!value) return '';
+    try {
+      return new URL(value, playlistUrl).href;
+    } catch {
+      return value;
+    }
+  };
   const channels: {
     id: string;
     tvgId: string;
@@ -209,7 +215,10 @@ function parseM3U(sourceKey: string, m3uContent: string): {
     url: string;
   }[] = [];
 
-  const lines = m3uContent.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  const lines = m3uContent
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 
   let tvgUrl = '';
   let channelIndex = 0;
@@ -220,7 +229,7 @@ function parseM3U(sourceKey: string, m3uContent: string): {
     if (line.startsWith('#EXTM3U')) {
       // 支持两种格式：x-tvg-url 和 url-tvg
       const tvgUrlMatch = line.match(/(?:x-tvg-url|url-tvg)="([^"]*)"/);
-      tvgUrl = tvgUrlMatch ? tvgUrlMatch[1].split(',')[0].trim() : '';
+      tvgUrl = tvgUrlMatch ? absolute(tvgUrlMatch[1].split(',')[0].trim()) : '';
       continue;
     }
 
@@ -249,9 +258,18 @@ function parseM3U(sourceKey: string, m3uContent: string): {
       // 优先使用 tvg-name，如果没有则使用标题
       const name = title || tvgName || '';
 
+      // IPTV lists may place EXTVLCOPT/EXTGRP tags between metadata and the URL.
+      let next = i + 1;
+      while (
+        next < lines.length &&
+        lines[next].startsWith('#') &&
+        !lines[next].startsWith('#EXTINF:')
+      )
+        next++;
+      if (next < lines.length && !lines[next].startsWith('#')) i = next - 1;
       // 检查下一行是否是URL
       if (i + 1 < lines.length && !lines[i + 1].startsWith('#')) {
-        const url = lines[i + 1];
+        const url = absolute(lines[i + 1]);
 
         // 只有当有名称和URL时才添加到结果中
         if (name && url) {
@@ -259,9 +277,9 @@ function parseM3U(sourceKey: string, m3uContent: string): {
             id: `${sourceKey}-${channelIndex}`,
             tvgId,
             name,
-            logo,
+            logo: absolute(logo),
             group,
-            url
+            url,
           });
           channelIndex++;
         }
@@ -279,7 +297,10 @@ function parseM3U(sourceKey: string, m3uContent: string): {
 export function resolveUrl(baseUrl: string, relativePath: string) {
   try {
     // 如果已经是完整的 URL，直接返回
-    if (relativePath.startsWith('http://') || relativePath.startsWith('https://')) {
+    if (
+      relativePath.startsWith('http://') ||
+      relativePath.startsWith('https://')
+    ) {
       return relativePath;
     }
 
@@ -313,8 +334,8 @@ function fallbackUrlResolve(baseUrl: string, relativePath: string) {
     return `${urlObj.protocol}//${urlObj.host}${relativePath}`;
   } else if (relativePath.startsWith('../')) {
     // 上级目录相对路径 (../path/to/file)
-    const segments = base.split('/').filter(s => s);
-    const relativeSegments = relativePath.split('/').filter(s => s);
+    const segments = base.split('/').filter((s) => s);
+    const relativeSegments = relativePath.split('/').filter((s) => s);
 
     for (const segment of relativeSegments) {
       if (segment === '..') {
@@ -328,7 +349,9 @@ function fallbackUrlResolve(baseUrl: string, relativePath: string) {
     return `${urlObj.protocol}//${urlObj.host}/${segments.join('/')}`;
   } else {
     // 当前目录相对路径 (file.ts 或 ./file.ts)
-    const cleanRelative = relativePath.startsWith('./') ? relativePath.slice(2) : relativePath;
+    const cleanRelative = relativePath.startsWith('./')
+      ? relativePath.slice(2)
+      : relativePath;
     return base + cleanRelative;
   }
 }
@@ -339,11 +362,14 @@ export function getBaseUrl(m3u8Url: string) {
     const url = new URL(m3u8Url);
     // 如果 URL 以 .m3u8 结尾，移除文件名
     if (url.pathname.endsWith('.m3u8')) {
-      url.pathname = url.pathname.substring(0, url.pathname.lastIndexOf('/') + 1);
+      url.pathname = url.pathname.substring(
+        0,
+        url.pathname.lastIndexOf('/') + 1
+      );
     } else if (!url.pathname.endsWith('/')) {
       url.pathname += '/';
     }
-    return url.protocol + "//" + url.host + url.pathname;
+    return url.protocol + '//' + url.host + url.pathname;
   } catch (error) {
     return m3u8Url.endsWith('/') ? m3u8Url : m3u8Url + '/';
   }

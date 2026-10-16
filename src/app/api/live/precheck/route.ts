@@ -1,54 +1,26 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-import { NextRequest, NextResponse } from 'next/server';
-
-import { getConfig } from '@/lib/config';
-
+import {
+  fetchLiveUpstream,
+  liveProxyContext,
+  liveProxyFailure,
+  liveResponseHeaders,
+} from '@/lib/live-proxy';
 export const runtime = 'nodejs';
-
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const url = searchParams.get('url');
-  const source = searchParams.get('moontv-source');
-
-  if (!url) {
-    return NextResponse.json({ error: 'Missing url' }, { status: 400 });
-  }
-  const config = await getConfig();
-  const liveSource = config.LiveConfig?.find((s: any) => s.key === source);
-  if (!liveSource) {
-    return NextResponse.json({ error: 'Source not found' }, { status: 404 });
-  }
-  const ua = liveSource.ua || 'AptvPlayer/1.4.10';
-
+export const dynamic = 'force-dynamic';
+export async function GET(request: Request) {
   try {
-    const decodedUrl = decodeURIComponent(url);
-
-    const response = await fetch(decodedUrl, {
-      cache: 'no-cache',
-      redirect: 'follow',
-      credentials: 'same-origin',
-      headers: {
-        'User-Agent': ua,
-      },
-    });
-
-    if (!response.ok) {
-      return NextResponse.json({ error: 'Failed to fetch', message: response.statusText }, { status: 500 });
-    }
-
-    const contentType = response.headers.get('Content-Type');
-    if (response.body) {
-      response.body.cancel();
-    }
-    if (contentType?.includes('video/mp4')) {
-      return NextResponse.json({ success: true, type: 'mp4' }, { status: 200 });
-    }
-    if (contentType?.includes('video/x-flv')) {
-      return NextResponse.json({ success: true, type: 'flv' }, { status: 200 });
-    }
-    return NextResponse.json({ success: true, type: 'm3u8' }, { status: 200 });
+    const { url, ua } = await liveProxyContext(request);
+    const response = await fetchLiveUpstream(url, ua, request, 6000);
+    const contentType = response.headers.get('content-type') || '';
+    await response.body?.cancel();
+    const type = /video\/mp4/i.test(contentType)
+      ? 'mp4'
+      : /(?:x-flv|video\/flv)/i.test(contentType)
+      ? 'flv'
+      : 'm3u8';
+    const headers = liveResponseHeaders();
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({ success: true, type }), { headers });
   } catch (error) {
-    return NextResponse.json({ error: 'Failed to fetch', message: error }, { status: 500 });
+    return liveProxyFailure(error);
   }
 }

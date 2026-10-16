@@ -2,8 +2,6 @@
 
 'use client';
 
-import Artplayer from 'artplayer';
-import Hls from 'hls.js';
 import { Heart, Radio, Tv } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useRef, useState } from 'react';
@@ -18,14 +16,8 @@ import {
 import { parseCustomTimeFormat } from '@/lib/time';
 
 import EpgScrollableRow from '@/components/EpgScrollableRow';
+import LivePlayer from '@/components/LivePlayer';
 import PageLayout from '@/components/PageLayout';
-
-// 扩展 HTMLVideoElement 类型以支持 hls 属性
-declare global {
-  interface HTMLVideoElement {
-    hls?: any;
-  }
-}
 
 // 直播频道接口
 interface LiveChannel {
@@ -83,8 +75,9 @@ function LivePageClient() {
 
   // 播放器相关
   const [videoUrl, setVideoUrl] = useState('');
-  const [isVideoLoading, setIsVideoLoading] = useState(false);
-  const [unsupportedType, setUnsupportedType] = useState<string | null>(null);
+  const [channelError, setChannelError] = useState('');
+  const channelRequest = useRef<AbortController | null>(null);
+  const sourceRequest = useRef<AbortController | null>(null);
 
   // 切换直播源状态
   const [isSwitchingSource, setIsSwitchingSource] = useState(false);
@@ -215,7 +208,6 @@ function LivePageClient() {
 
   // 播放器引用
   const artPlayerRef = useRef<any>(null);
-  const artRef = useRef<HTMLDivElement | null>(null);
 
   // 分组标签滚动相关
   const groupContainerRef = useRef<HTMLDivElement>(null);
@@ -228,273 +220,94 @@ function LivePageClient() {
 
   // 获取直播源列表
   const fetchLiveSources = async () => {
+    sourceRequest.current?.abort();
+    const controller = new AbortController();
+    sourceRequest.current = controller;
+    const timer = setTimeout(() => controller.abort(), 15000);
     try {
+      setError(null);
       setLoadingStage('fetching');
       setLoadingMessage('正在获取直播源...');
-
-      // 获取 AdminConfig 中的直播源信息
-      const response = await fetch('/api/live/sources');
-      if (!response.ok) {
-        throw new Error('获取直播源失败');
-      }
-
+      const response = await fetch('/api/live/sources', { signal: controller.signal, cache: 'no-store' });
       const result = await response.json();
-      if (!result.success) {
-        throw new Error(result.error || '获取直播源失败');
-      }
-
-      const sources = result.data;
+      if (!response.ok || !result.success) throw new Error(result.error || '获取直播源失败');
+      if (controller.signal.aborted) return;
+      clearTimeout(timer);
+      const sources: LiveSource[] = result.data.filter((item: LiveSource) => !item.disabled);
       setLiveSources(sources);
-
-      if (sources.length > 0) {
-        // 默认选中第一个源
-        const firstSource = sources[0];
-        if (needLoadSource) {
-          const foundSource = sources.find((s: LiveSource) => s.key === needLoadSource);
-          if (foundSource) {
-            setCurrentSource(foundSource);
-            await fetchChannels(foundSource);
-          } else {
-            setCurrentSource(firstSource);
-            await fetchChannels(firstSource);
-          }
-        } else {
-          setCurrentSource(firstSource);
-          await fetchChannels(firstSource);
-        }
+      if (sources.length) {
+        const source = sources.find(item => item.key === needLoadSource) || sources[0];
+        currentSourceRef.current = source;
+        setCurrentSource(source);
+        await fetchChannels(source);
       }
-
-      setLoadingStage('ready');
-      setLoadingMessage('✨ 准备就绪...');
-
-      setTimeout(() => {
-        setLoading(false);
-      }, 1000);
-    } catch (err) {
-      console.error('获取直播源失败:', err);
-      // 不设置错误，而是显示空状态
-      setLiveSources([]);
-      setLoading(false);
+      if (!controller.signal.aborted) { setLoadingStage('ready'); setLoading(false); }
+    } catch {
+      if (sourceRequest.current === controller) { setError('直播源加载失败，请检查网络后重试。'); setLoading(false); }
     } finally {
-      // 移除 URL 搜索参数中的 source 和 id
-      const newSearchParams = new URLSearchParams(searchParams.toString());
-      newSearchParams.delete('source');
-      newSearchParams.delete('id');
-
-      const newUrl = newSearchParams.toString()
-        ? `?${newSearchParams.toString()}`
-        : window.location.pathname;
-
-      router.replace(newUrl);
+      clearTimeout(timer);
+      if (!controller.signal.aborted) {
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete('source'); params.delete('id');
+        router.replace(params.toString() ? '?' + params : window.location.pathname);
+      }
     }
   };
 
-  // 获取频道列表
-  const fetchChannels = async (source: LiveSource) => {
+  const fetchChannels = async (source: LiveSource, refresh = false) => {
+    const previousChannel = currentChannelRef.current;
+    channelRequest.current?.abort();
+    const controller = new AbortController();
+    channelRequest.current = controller;
+    const timer = setTimeout(() => controller.abort(), 35000);
+    setIsSwitchingSource(true);
+    setChannelError('');
+    setVideoUrl('');
+    setCurrentChannel(null);
+    setCurrentChannels([]);
+    setGroupedChannels({});
+    setFilteredChannels([]);
+    setEpgData(null);
     try {
-      setIsVideoLoading(true);
-
-      // 从 cachedLiveChannels 获取频道信息
-      const response = await fetch(`/api/live/channels?source=${source.key}`);
-      if (!response.ok) {
-        throw new Error('获取频道列表失败');
-      }
-
+      const params = new URLSearchParams({ source: source.key });
+      if (refresh) params.set('refresh', '1');
+      const response = await fetch('/api/live/channels?' + params, { signal: controller.signal, cache: 'no-store' });
       const result = await response.json();
-      if (!result.success) {
-        throw new Error(result.error || '获取频道列表失败');
-      }
-
-      const channelsData = result.data;
-      if (!channelsData || channelsData.length === 0) {
-        // 不抛出错误，而是设置空频道列表
-        setCurrentChannels([]);
-        setGroupedChannels({});
-        setFilteredChannels([]);
-
-        // 更新直播源的频道数为 0
-        setLiveSources(prevSources =>
-          prevSources.map(s =>
-            s.key === source.key ? { ...s, channelNumber: 0 } : s
-          )
-        );
-
-        setIsVideoLoading(false);
-        return;
-      }
-
-      // 转换频道数据格式
-      const channels: LiveChannel[] = channelsData.map((channel: any) => ({
-        id: channel.id,
-        tvgId: channel.tvgId || channel.name,
-        name: channel.name,
-        logo: channel.logo,
-        group: channel.group || '其他',
-        url: channel.url
-      }));
-
+      if (channelRequest.current !== controller || controller.signal.aborted) return;
+      if (!response.ok || !result.success) throw new Error(result.error || '获取频道列表失败');
+      const channels: LiveChannel[] = result.data.map((item: LiveChannel) => ({ ...item, group: item.group || '其他' }));
+      if (!channels.length) throw new Error('此直播源暂无频道，请刷新或切换直播源。');
+      const grouped: Record<string, LiveChannel[]> = {};
+      channels.forEach(channel => { if (!grouped[channel.group]) grouped[channel.group] = []; grouped[channel.group].push(channel); });
+      const selected = channels.find(channel => previousChannel && ((previousChannel.tvgId && channel.tvgId === previousChannel.tvgId) || (channel.name === previousChannel.name && channel.group === previousChannel.group))) || channels.find(channel => channel.id === needLoadChannel) || channels[0];
       setCurrentChannels(channels);
-
-      // 更新直播源的频道数
-      setLiveSources(prevSources =>
-        prevSources.map(s =>
-          s.key === source.key ? { ...s, channelNumber: channels.length } : s
-        )
-      );
-
-      // 默认选中第一个频道
-      if (channels.length > 0) {
-        if (needLoadChannel) {
-          const foundChannel = channels.find((c: LiveChannel) => c.id === needLoadChannel);
-          if (foundChannel) {
-            setCurrentChannel(foundChannel);
-            setVideoUrl(foundChannel.url);
-            // 延迟滚动到选中的频道
-            setTimeout(() => {
-              scrollToChannel(foundChannel);
-            }, 200);
-          } else {
-            setCurrentChannel(channels[0]);
-            setVideoUrl(channels[0].url);
-          }
-        } else {
-          setCurrentChannel(channels[0]);
-          setVideoUrl(channels[0].url);
-        }
-      }
-
-      // 按分组组织频道
-      const grouped = channels.reduce((acc, channel) => {
-        const group = channel.group || '其他';
-        if (!acc[group]) {
-          acc[group] = [];
-        }
-        acc[group].push(channel);
-        return acc;
-      }, {} as { [key: string]: LiveChannel[] });
-
       setGroupedChannels(grouped);
-
-      // 默认选中当前加载的channel所在的分组，如果没有则选中第一个分组
-      let targetGroup = '';
-      if (needLoadChannel) {
-        const foundChannel = channels.find((c: LiveChannel) => c.id === needLoadChannel);
-        if (foundChannel) {
-          targetGroup = foundChannel.group || '其他';
-        }
-      }
-
-      // 如果目标分组不存在，则使用第一个分组
-      if (!targetGroup || !grouped[targetGroup]) {
-        targetGroup = Object.keys(grouped)[0] || '';
-      }
-
-      // 先设置过滤后的频道列表，但不设置选中的分组
-      setFilteredChannels(targetGroup ? grouped[targetGroup] : channels);
-
-      // 触发模拟点击分组，让模拟点击来设置分组状态和触发滚动
-      if (targetGroup) {
-        // 确保切换到频道tab
-        setActiveTab('channels');
-
-        // 使用更长的延迟，确保状态更新和DOM渲染完成
-        setTimeout(() => {
-          simulateGroupClick(targetGroup);
-        }, 500); // 增加延迟时间，确保状态更新和DOM渲染完成
-      }
-
-      setIsVideoLoading(false);
-    } catch (err) {
-      console.error('获取频道列表失败:', err);
-      // 不设置错误，而是设置空频道列表
-      setCurrentChannels([]);
-      setGroupedChannels({});
-      setFilteredChannels([]);
-
-      // 更新直播源的频道数为 0
-      setLiveSources(prevSources =>
-        prevSources.map(s =>
-          s.key === source.key ? { ...s, channelNumber: 0 } : s
-        )
-      );
-
-      setIsVideoLoading(false);
+      setSelectedGroup(selected.group);
+      setFilteredChannels(grouped[selected.group]);
+      setCurrentChannel(selected);
+      setVideoUrl(selected.url);
+      setLiveSources(items => items.map(item => item.key === source.key ? { ...item, channelNumber: channels.length } : item));
+      setActiveTab('channels');
+    } catch (cause) {
+      if (channelRequest.current === controller) setChannelError(controller.signal.aborted ? '频道加载超时，请刷新重试或切换直播源。' : cause instanceof Error ? cause.message : '频道加载失败，请重试。');
+    } finally {
+      clearTimeout(timer);
+      if (channelRequest.current === controller) setIsSwitchingSource(false);
     }
   };
 
   // 切换直播源
   const handleSourceChange = async (source: LiveSource) => {
-    try {
-      // 设置切换状态，锁住频道切换器
-      setIsSwitchingSource(true);
-
-      // 首先销毁当前播放器
-      cleanupPlayer();
-
-      // 重置不支持的类型状态
-      setUnsupportedType(null);
-
-      // 清空节目单信息
-      setEpgData(null);
-
-      setCurrentSource(source);
-      await fetchChannels(source);
-    } catch (err) {
-      console.error('切换直播源失败:', err);
-      // 不设置错误，保持当前状态
-    } finally {
-      // 切换完成，解锁频道切换器
-      setIsSwitchingSource(false);
-      // 自动切换到频道 tab
-      setActiveTab('channels');
-    }
+    currentSourceRef.current = source;
+    setCurrentSource(source);
+    await fetchChannels(source);
   };
 
-  // 切换频道
-  const handleChannelChange = async (channel: LiveChannel) => {
-    // 如果正在切换直播源，则禁用频道切换
+  const handleChannelChange = (channel: LiveChannel) => {
     if (isSwitchingSource) return;
-
-    // 首先销毁当前播放器
-    cleanupPlayer();
-
-    // 重置不支持的类型状态
-    setUnsupportedType(null);
-
     setCurrentChannel(channel);
     setVideoUrl(channel.url);
-
-    // 自动滚动到选中的频道位置
-    setTimeout(() => {
-      scrollToChannel(channel);
-    }, 100);
-
-    // 获取节目单信息
-    if (channel.tvgId && currentSource) {
-      try {
-        setIsEpgLoading(true); // 开始加载 EPG 数据
-        const response = await fetch(`/api/live/epg?source=${currentSource.key}&tvgId=${channel.tvgId}`);
-        if (response.ok) {
-          const result = await response.json();
-          if (result.success) {
-            // 清洗EPG数据，去除重叠的节目
-            const cleanedData = {
-              ...result.data,
-              programs: cleanEpgData(result.data.programs)
-            };
-            setEpgData(cleanedData);
-          }
-        }
-      } catch (error) {
-        console.error('获取节目单信息失败:', error);
-      } finally {
-        setIsEpgLoading(false); // 无论成功失败都结束加载状态
-      }
-    } else {
-      // 如果没有 tvgId 或 currentSource，清空 EPG 数据
-      setEpgData(null);
-      setIsEpgLoading(false);
-    }
+    scrollToChannel(channel);
   };
 
   // 滚动到指定频道位置的函数
@@ -518,108 +331,6 @@ function LivePageClient() {
         top: Math.max(0, scrollTop),
         behavior: 'smooth'
       });
-    }
-  };
-
-  // 模拟点击分组的函数
-  const simulateGroupClick = (group: string, retryCount = 0) => {
-    if (!groupContainerRef.current) {
-      if (retryCount < 10) {
-        setTimeout(() => {
-          simulateGroupClick(group, retryCount + 1);
-        }, 200);
-        return;
-      } else {
-        return;
-      }
-    }
-
-    // 直接通过 data-group 属性查找目标按钮
-    const targetButton = groupContainerRef.current.querySelector(`[data-group="${group}"]`) as HTMLButtonElement;
-
-    if (targetButton) {
-      // 手动设置分组状态，确保状态一致性
-      setSelectedGroup(group);
-
-      // 触发点击事件
-      (targetButton as HTMLButtonElement).click();
-    }
-  };
-
-  // 清理播放器资源的统一函数
-  const cleanupPlayer = () => {
-    // 重置不支持的类型状态
-    setUnsupportedType(null);
-
-    if (artPlayerRef.current) {
-      try {
-        // 先暂停播放
-        if (artPlayerRef.current.video) {
-          artPlayerRef.current.video.pause();
-          artPlayerRef.current.video.src = '';
-          artPlayerRef.current.video.load();
-        }
-
-        // 销毁 HLS 实例
-        if (artPlayerRef.current.video && artPlayerRef.current.video.hls) {
-          artPlayerRef.current.video.hls.destroy();
-          artPlayerRef.current.video.hls = null;
-        }
-
-        // 销毁 FLV 实例 - 增强清理逻辑
-        if (artPlayerRef.current.video && artPlayerRef.current.video.flv) {
-          try {
-            // 先停止加载
-            if (artPlayerRef.current.video.flv.unload) {
-              artPlayerRef.current.video.flv.unload();
-            }
-            // 销毁播放器
-            artPlayerRef.current.video.flv.destroy();
-            // 确保引用被清空
-            artPlayerRef.current.video.flv = null;
-          } catch (flvError) {
-            console.warn('FLV实例销毁时出错:', flvError);
-            // 强制清空引用
-            artPlayerRef.current.video.flv = null;
-          }
-        }
-
-        // 移除所有事件监听器
-        artPlayerRef.current.off('ready');
-        artPlayerRef.current.off('loadstart');
-        artPlayerRef.current.off('loadeddata');
-        artPlayerRef.current.off('canplay');
-        artPlayerRef.current.off('waiting');
-        artPlayerRef.current.off('error');
-
-        // 销毁 ArtPlayer 实例
-        artPlayerRef.current.destroy();
-        artPlayerRef.current = null;
-      } catch (err) {
-        console.warn('清理播放器资源时出错:', err);
-        artPlayerRef.current = null;
-      }
-    }
-  };
-
-  // 确保视频源正确设置
-  const ensureVideoSource = (video: HTMLVideoElement | null, url: string) => {
-    if (!video || !url) return;
-    const sources = Array.from(video.getElementsByTagName('source'));
-    const existed = sources.some((s) => s.src === url);
-    if (!existed) {
-      // 移除旧的 source，保持唯一
-      sources.forEach((s) => s.remove());
-      const sourceEl = document.createElement('source');
-      sourceEl.src = url;
-      video.appendChild(sourceEl);
-    }
-
-    // 始终允许远程播放（AirPlay / Cast）
-    video.disableRemotePlayback = false;
-    // 如果曾经有禁用属性，移除之
-    if (video.hasAttribute('disableRemotePlayback')) {
-      video.removeAttribute('disableRemotePlayback');
     }
   };
 
@@ -668,7 +379,7 @@ function LivePageClient() {
             title: currentChannelRef.current.name,
             source_name: currentSourceRef.current.name,
             year: '',
-            cover: `/api/proxy/logo?url=${encodeURIComponent(currentChannelRef.current.logo)}&source=${currentSourceRef.current.key}`,
+            cover: `/api/proxy/logo?url=${encodeURIComponent(currentChannelRef.current.logo)}&moontv-source=${currentSourceRef.current.key}`,
             total_episodes: 1,
             save_time: Date.now(),
             search_title: '',
@@ -691,7 +402,8 @@ function LivePageClient() {
 
   // 初始化
   useEffect(() => {
-    fetchLiveSources();
+    void fetchLiveSources();
+    return () => { sourceRequest.current?.abort(); channelRequest.current?.abort(); };
   }, []);
 
   // 检查收藏状态
@@ -757,249 +469,22 @@ function LivePageClient() {
     }
   }, [selectedGroup, groupedChannels]);
 
-  class CustomHlsJsLoader extends Hls.DefaultConfig.loader {
-    constructor(config: any) {
-      super(config);
-      const load = this.load.bind(this);
-      this.load = function (context: any, config: any, callbacks: any) {
-        // 所有的请求都带一个 source 参数
-        try {
-          const url = new URL(context.url);
-          url.searchParams.set('moontv-source', currentSourceRef.current?.key || '');
-          context.url = url.toString();
-        } catch (error) {
-          // ignore
-        }
-        // 拦截manifest和level请求
-        if (
-          (context as any).type === 'manifest' ||
-          (context as any).type === 'level'
-        ) {
-          // 判断是否浏览器直连
-          const isLiveDirectConnectStr = localStorage.getItem('liveDirectConnect');
-          const isLiveDirectConnect = isLiveDirectConnectStr === 'true';
-          if (isLiveDirectConnect) {
-            // 浏览器直连，使用 URL 对象处理参数
-            try {
-              const url = new URL(context.url);
-              url.searchParams.set('allowCORS', 'true');
-              context.url = url.toString();
-            } catch (error) {
-              // 如果 URL 解析失败，回退到字符串拼接
-              context.url = context.url + '&allowCORS=true';
-            }
-          }
-        }
-        // 执行原始load方法
-        load(context, config, callbacks);
-      };
-    }
-  }
-
-  function m3u8Loader(video: HTMLVideoElement, url: string) {
-    if (!Hls) {
-      console.error('HLS.js 未加载');
-      return;
-    }
-
-    // 清理之前的 HLS 实例
-    if (video.hls) {
-      try {
-        video.hls.destroy();
-        video.hls = null;
-      } catch (err) {
-        console.warn('清理 HLS 实例时出错:', err);
-      }
-    }
-
-    const hls = new Hls({
-      debug: false,
-      enableWorker: true,
-      lowLatencyMode: true,
-      maxBufferLength: 30,
-      backBufferLength: 30,
-      maxBufferSize: 60 * 1000 * 1000,
-      loader: CustomHlsJsLoader,
-    });
-
-    hls.loadSource(url);
-    hls.attachMedia(video);
-    video.hls = hls;
-
-    hls.on(Hls.Events.ERROR, function (event: any, data: any) {
-      console.error('HLS Error:', event, data);
-
-      if (data.fatal) {
-        switch (data.type) {
-          case Hls.ErrorTypes.NETWORK_ERROR:
-            hls.startLoad();
-            break;
-          case Hls.ErrorTypes.MEDIA_ERROR:
-            // hls.recoverMediaError();
-            break;
-          default:
-            hls.destroy();
-            break;
-        }
-      }
-    });
-  }
-
-  // 播放器初始化
+  // Optional programme data loads independently and cannot overwrite a newer channel.
   useEffect(() => {
-    const preload = async () => {
-      if (
-        !Artplayer ||
-        !Hls ||
-        !videoUrl ||
-        !artRef.current ||
-        !currentChannel
-      ) {
-        return;
-      }
-
-      console.log('视频URL:', videoUrl);
-
-      // 销毁之前的播放器实例并创建新的
-      if (artPlayerRef.current) {
-        cleanupPlayer();
-      }
-
-      // precheck type
-      let type = 'm3u8';
-      const precheckUrl = `/api/live/precheck?url=${encodeURIComponent(videoUrl)}&moontv-source=${currentSourceRef.current?.key || ''}`;
-      const precheckResponse = await fetch(precheckUrl);
-      if (!precheckResponse.ok) {
-        console.error('预检查失败:', precheckResponse.statusText);
-        return;
-      }
-      const precheckResult = await precheckResponse.json();
-      if (precheckResult.success) {
-        type = precheckResult.type;
-      }
-
-      // 如果不是 m3u8 类型，设置不支持的类型并返回
-      if (type !== 'm3u8') {
-        setUnsupportedType(type);
-        setIsVideoLoading(false);
-        return;
-      }
-
-      // 重置不支持的类型
-      setUnsupportedType(null);
-
-      const customType = { m3u8: m3u8Loader };
-      const targetUrl = `/api/proxy/m3u8?url=${encodeURIComponent(videoUrl)}&moontv-source=${currentSourceRef.current?.key || ''}`;
-      try {
-        // 创建新的播放器实例
-        Artplayer.USE_RAF = false;
-        Artplayer.FULLSCREEN_WEB_IN_BODY = true;
-
-        artPlayerRef.current = new Artplayer({
-          container: artRef.current,
-          url: targetUrl,
-          poster: currentChannel.logo,
-          volume: 0.7,
-          isLive: true, // 设置为直播模式
-          muted: false,
-          autoplay: true,
-          pip: true,
-          autoSize: false,
-          autoMini: false,
-          screenshot: false,
-          setting: false,
-          loop: false,
-          flip: false,
-          playbackRate: false,
-          aspectRatio: false,
-          fullscreen: true,
-          fullscreenWeb: true,
-          subtitleOffset: false,
-          miniProgressBar: false,
-          mutex: true,
-          playsInline: true,
-          autoPlayback: false,
-          airplay: true,
-          theme: '#22c55e',
-          lang: 'zh-cn',
-          hotkey: false,
-          fastForward: false, // 直播不需要快进
-          autoOrientation: true,
-          lock: true,
-          moreVideoAttr: {
-            crossOrigin: 'anonymous',
-            preload: 'metadata',
-          },
-          type: type,
-          customType: customType,
-          icons: {
-            loading:
-              '<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgdmlld0JveD0iMCAwIDUwIDUwIj48cGF0aCBkPSJNMjUuMjUxIDYuNDYxYy0xMC4zMTggMC0xOC42ODMgOC4zNjUtMTguNjgzIDE4LjY4M2g0LjA2OGMwLTguMDcgNi41NDUtMTQuNjE1IDE0LjYxNS0xNC42MTVWNi40NjF6IiBmaWxsPSIjMDA5Njg4Ij48YW5pbWF0ZVRyYW5zZm9ybSBhdHRyaWJ1dGVOYW1lPSJ0cmFuc2Zvcm0iIGF0dHJpYnV0ZVR5cGU9IlhNTCIgZHVyPSIxcyIgZnJvbT0iMCAyNSAyNSIgcmVwZWF0Q291bnQ9ImluZGVmaW5pdGUiIHRvPSIzNjAgMjUgMjUiIHR5cGU9InJvdGF0ZSIvPjwvcGF0aD48L3N2Zz4=">',
-          },
-        });
-
-        // 监听播放器事件
-        artPlayerRef.current.on('ready', () => {
-          setError(null);
-          setIsVideoLoading(false);
-
-        });
-
-        artPlayerRef.current.on('loadstart', () => {
-          setIsVideoLoading(true);
-        });
-
-        artPlayerRef.current.on('loadeddata', () => {
-          setIsVideoLoading(false);
-        });
-
-        artPlayerRef.current.on('canplay', () => {
-          setIsVideoLoading(false);
-        });
-
-        artPlayerRef.current.on('waiting', () => {
-          setIsVideoLoading(true);
-        });
-
-        artPlayerRef.current.on('error', (err: any) => {
-          console.error('播放器错误:', err);
-        });
-
-        if (artPlayerRef.current?.video) {
-          ensureVideoSource(
-            artPlayerRef.current.video as HTMLVideoElement,
-            targetUrl
-          );
-        }
-
-      } catch (err) {
-        console.error('创建播放器失败:', err);
-        // 不设置错误，只记录日志
-      }
-    }
-    preload();
-  }, [Artplayer, Hls, videoUrl, currentChannel, loading]);
-
-  // 清理播放器资源
-  useEffect(() => {
-    return () => {
-      cleanupPlayer();
-    };
-  }, []);
-
-  // 页面卸载时的额外清理
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      cleanupPlayer();
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      cleanupPlayer();
-    };
-  }, []);
+    setEpgData(null);
+    if (!currentChannel?.tvgId || !currentSource) { setIsEpgLoading(false); return; }
+    const controller = new AbortController();
+    let active = true;
+    const timer = setTimeout(() => controller.abort(), 20000);
+    setIsEpgLoading(true);
+    const query = new URLSearchParams({ source: currentSource.key, tvgId: currentChannel.tvgId });
+    void fetch('/api/live/epg?' + query, { signal: controller.signal, cache: 'no-store' }).then(async response => {
+      if (!response.ok) return;
+      const result = await response.json();
+      if (active && result.success) setEpgData({ ...result.data, programs: cleanEpgData(result.data.programs) });
+    }).catch(() => undefined).finally(() => { clearTimeout(timer); if (active) setIsEpgLoading(false); });
+    return () => { active = false; clearTimeout(timer); controller.abort(); };
+  }, [currentSource?.key, currentChannel?.id]);
 
   // 全局快捷键处理
   useEffect(() => {
@@ -1115,7 +600,8 @@ function LivePageClient() {
             </div>
 
             {/* 加载消息 */}
-            <div className='space-y-2'>
+            {channelError && <div role='alert' className='mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200'><span>{channelError}</span><button type='button' onClick={() => currentSource && void fetchChannels(currentSource, true)} className='rounded-lg bg-red-500 px-4 py-2 font-semibold text-white'>刷新频道</button></div>}
+        <div className='space-y-2'>
               <p className='text-xl font-semibold text-gray-800 dark:text-gray-200 animate-pulse'>
                 {loadingMessage}
               </p>
@@ -1243,59 +729,10 @@ function LivePageClient() {
             {/* 播放器 */}
             <div className={`h-full transition-all duration-300 ease-in-out ${isChannelListCollapsed ? 'col-span-1' : 'md:col-span-3'}`}>
               <div className='relative w-full h-[300px] lg:h-full'>
-                <div
-                  ref={artRef}
-                  className='bg-black w-full h-full rounded-xl overflow-hidden shadow-lg border border-white/0 dark:border-white/30'
-                ></div>
+                {videoUrl && currentSource && currentChannel ? (
+                  <LivePlayer key={currentSource.key + ':' + currentChannel.id} url={videoUrl} source={currentSource.key} poster={currentChannel.logo ? '/api/proxy/logo?' + new URLSearchParams({ url: currentChannel.logo, 'moontv-source': currentSource.key }) : undefined} playerRef={artPlayerRef} onRefresh={() => void fetchChannels(currentSource, true)} />
+                ) : <div className='flex h-full items-center justify-center rounded-xl bg-black/90 px-5 text-center text-sm text-white' role='status'>{isSwitchingSource ? '正在加载频道…' : '请选择直播源和频道'}</div>}
 
-                {/* 不支持的直播类型提示 */}
-                {unsupportedType && (
-                  <div className='absolute inset-0 bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden shadow-lg border border-white/0 dark:border-white/30 flex items-center justify-center z-[600] transition-all duration-300'>
-                    <div className='text-center max-w-md mx-auto px-6'>
-                      <div className='relative mb-8'>
-                        <div className='relative mx-auto w-24 h-24 bg-gradient-to-r from-orange-500 to-red-600 rounded-2xl shadow-2xl flex items-center justify-center transform hover:scale-105 transition-transform duration-300'>
-                          <div className='text-white text-4xl'>⚠️</div>
-                          <div className='absolute -inset-2 bg-gradient-to-r from-orange-500 to-red-600 rounded-2xl opacity-20 animate-pulse'></div>
-                        </div>
-                      </div>
-                      <div className='space-y-4'>
-                        <h3 className='text-xl font-semibold text-white'>
-                          暂不支持的直播流类型
-                        </h3>
-                        <div className='bg-orange-500/20 border border-orange-500/30 rounded-lg p-4'>
-                          <p className='text-orange-300 font-medium'>
-                            当前频道直播流类型：<span className='text-white font-bold'>{unsupportedType.toUpperCase()}</span>
-                          </p>
-                          <p className='text-sm text-orange-200 mt-2'>
-                            目前仅支持 M3U8 格式的直播流
-                          </p>
-                        </div>
-                        <p className='text-sm text-gray-300'>
-                          请尝试其他频道
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* 视频加载蒙层 */}
-                {isVideoLoading && (
-                  <div className='absolute inset-0 bg-black/85 backdrop-blur-sm rounded-xl overflow-hidden shadow-lg border border-white/0 dark:border-white/30 flex items-center justify-center z-[500] transition-all duration-300'>
-                    <div className='text-center max-w-md mx-auto px-6'>
-                      <div className='relative mb-8'>
-                        <div className='relative mx-auto w-24 h-24 bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl shadow-2xl flex items-center justify-center transform hover:scale-105 transition-transform duration-300'>
-                          <div className='text-white text-4xl'>📺</div>
-                          <div className='absolute -inset-2 bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl opacity-20 animate-spin'></div>
-                        </div>
-                      </div>
-                      <div className='space-y-2'>
-                        <p className='text-xl font-semibold text-white animate-pulse'>
-                          🔄 IPTV 加载中...
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -1424,7 +861,7 @@ function LivePageClient() {
                                 <div className='w-10 h-10 bg-gray-300 dark:bg-gray-700 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden'>
                                   {channel.logo ? (
                                     <img
-                                      src={`/api/proxy/logo?url=${encodeURIComponent(channel.logo)}&source=${currentSource?.key || ''}`}
+                                      src={`/api/proxy/logo?url=${encodeURIComponent(channel.logo)}&moontv-source=${currentSource?.key || ''}`}
                                       alt={channel.name}
                                       className='w-full h-full rounded object-contain'
                                       loading="lazy"
@@ -1532,7 +969,7 @@ function LivePageClient() {
                   <div className='w-20 h-20 bg-gray-300 dark:bg-gray-700 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden'>
                     {currentChannel.logo ? (
                       <img
-                        src={`/api/proxy/logo?url=${encodeURIComponent(currentChannel.logo)}&source=${currentSource?.key || ''}`}
+                        src={`/api/proxy/logo?url=${encodeURIComponent(currentChannel.logo)}&moontv-source=${currentSource?.key || ''}`}
                         alt={currentChannel.name}
                         className='w-full h-full rounded object-contain'
                         loading="lazy"

@@ -3838,7 +3838,7 @@ const SiteConfigComponent = ({ config, refreshConfig }: { config: AdminConfig | 
           </button>
         </div>
         <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
-          网页直播性能较差，会导致服务器内存泄露。
+          启用后可在浏览器观看 HLS 直播；播放可用性取决于直播源、网络及浏览器支持的编码。
         </p>
       </div>
 
