@@ -1,5 +1,6 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 
+import { createHash, timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig, refineConfig } from '@/lib/config';
@@ -9,13 +10,25 @@ import { refreshLiveChannels } from '@/lib/live';
 import { SearchResult } from '@/lib/types';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  console.log(request.url);
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    return NextResponse.json(
+      { error: 'Cron is disabled: CRON_SECRET is not configured' },
+      { status: 503 }
+    );
+  }
+  const provided = request.headers.get('authorization') || '';
+  const digest = (value: string) => createHash('sha256').update(value).digest();
+  if (!timingSafeEqual(digest(provided), digest(`Bearer ${secret}`))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     console.log('Cron job triggered:', new Date().toISOString());
 
-    cronJob();
+    await cronJob();
 
     return NextResponse.json({
       success: true,
@@ -45,17 +58,23 @@ async function cronJob() {
 
 async function refreshAllLiveChannels() {
   const config = await getConfig();
+  let changed = false;
 
   // 并发刷新所有启用的直播源
   const refreshPromises = (config.LiveConfig || [])
-    .filter(liveInfo => !liveInfo.disabled)
+    .filter((liveInfo) => !liveInfo.disabled)
     .map(async (liveInfo) => {
       try {
         const nums = await refreshLiveChannels(liveInfo);
-        liveInfo.channelNumber = nums;
+        if (liveInfo.channelNumber !== nums) {
+          liveInfo.channelNumber = nums;
+          changed = true;
+        }
       } catch (error) {
-        console.error(`刷新直播源失败 [${liveInfo.name || liveInfo.key}]:`, error);
-        liveInfo.channelNumber = 0;
+        console.error(
+          `刷新直播源失败 [${liveInfo.name || liveInfo.key}]:`,
+          error
+        );
       }
     });
 
@@ -63,12 +82,17 @@ async function refreshAllLiveChannels() {
   await Promise.all(refreshPromises);
 
   // 保存配置
-  await db.saveAdminConfig(config);
+  if (changed) await db.saveAdminConfig(config);
 }
 
 async function refreshConfig() {
   let config = await getConfig();
-  if (config && config.ConfigSubscribtion && config.ConfigSubscribtion.URL && config.ConfigSubscribtion.AutoUpdate) {
+  if (
+    config &&
+    config.ConfigSubscribtion &&
+    config.ConfigSubscribtion.URL &&
+    config.ConfigSubscribtion.AutoUpdate
+  ) {
     try {
       const response = await fetch(config.ConfigSubscribtion.URL);
 
@@ -156,7 +180,11 @@ async function refreshRecordAndFavorites() {
           results[i] = await tasks[i]();
         }
       };
-      await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker()));
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, tasks.length) }, () =>
+          worker()
+        )
+      );
       return results;
     };
 
@@ -210,7 +238,16 @@ async function refreshRecordAndFavorites() {
           }
         });
 
-        await runWithConcurrency(tasks, 5);
+        // KV stores a whole collection per user: serialize its read/modify/write
+        // operations so this refresh cannot overwrite its own updates.
+        await runWithConcurrency(
+          tasks,
+          ['cloudflare-kv', 'kv'].includes(
+            process.env.NEXT_PUBLIC_STORAGE_TYPE || ''
+          )
+            ? 1
+            : 5
+        );
         console.log(`播放记录处理完成: ${processedRecords}/${totalRecords}`);
       } catch (err) {
         console.error(`获取用户播放记录失败 (${user}):`, err);
@@ -262,7 +299,14 @@ async function refreshRecordAndFavorites() {
           }
         });
 
-        await runWithConcurrency(tasks, 5);
+        await runWithConcurrency(
+          tasks,
+          ['cloudflare-kv', 'kv'].includes(
+            process.env.NEXT_PUBLIC_STORAGE_TYPE || ''
+          )
+            ? 1
+            : 5
+        );
         console.log(`收藏处理完成: ${processedFavorites}/${totalFavorites}`);
       } catch (err) {
         console.error(`获取用户收藏失败 (${user}):`, err);

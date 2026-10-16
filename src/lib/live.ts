@@ -42,8 +42,10 @@ export async function getCachedLiveChannels(key: string): Promise<LiveChannels |
     if (channelNum === 0) {
       return null;
     }
-    liveInfo.channelNumber = channelNum;
-    await db.saveAdminConfig(config);
+    if (liveInfo.channelNumber !== channelNum) {
+      liveInfo.channelNumber = channelNum;
+      await db.saveAdminConfig(config);
+    }
   }
   return cachedLiveChannels[key] || null;
 }

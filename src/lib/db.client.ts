@@ -28,6 +28,22 @@ function triggerGlobalError(message: string) {
   }
 }
 
+// Automatic checkpoints only; pause, episode changes and page hiding still save.
+export function getPlayProgressSaveInterval(): number {
+  switch (STORAGE_TYPE as string) {
+    case 'cloudflare-kv':
+    case 'kv':
+      return 120000;
+    case 'cloudflare-d1':
+    case 'd1':
+      return 60000;
+    case 'upstash':
+      return 20000;
+    default:
+      return 5000;
+  }
+}
+
 // ---- 类型 ----
 export interface PlayRecord {
   title: string;
@@ -83,11 +99,8 @@ const STORAGE_TYPE = (() => {
   const raw =
     (typeof window !== 'undefined' &&
       (window as any).RUNTIME_CONFIG?.STORAGE_TYPE) ||
-    (process.env.STORAGE_TYPE as
-      | 'localstorage'
-      | 'redis'
-      | 'upstash'
-      | undefined) ||
+    process.env.NEXT_PUBLIC_STORAGE_TYPE ||
+    process.env.STORAGE_TYPE ||
     'localstorage';
   return raw;
 })();

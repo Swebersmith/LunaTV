@@ -1,6 +1,7 @@
 /* eslint-disable no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
 import { AdminConfig } from './admin.types';
+import { CloudflareD1Storage } from './cloudflare-d1.db';
 import { CloudflareKVStorage } from './cloudflare-kv.db';
 import { KvrocksStorage } from './kvrocks.db';
 import { RedisStorage } from './redis.db';
@@ -16,6 +17,8 @@ const STORAGE_TYPE =
     | 'kvrocks'
     | 'cloudflare-kv'
     | 'kv'
+    | 'cloudflare-d1'
+    | 'd1'
     | undefined) || 'localstorage';
 
 // 创建存储实例
@@ -30,6 +33,9 @@ function createStorage(): IStorage {
     case 'cloudflare-kv':
     case 'kv':
       return new CloudflareKVStorage();
+    case 'cloudflare-d1':
+    case 'd1':
+      return new CloudflareD1Storage();
     case 'localstorage':
     default:
       return null as unknown as IStorage;

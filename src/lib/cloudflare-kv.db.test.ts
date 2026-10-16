@@ -17,6 +17,20 @@ class MemoryKV implements CloudflareKVBinding {
 }
 
 describe('CloudflareKVStorage', () => {
+  it('does not repeat identical writes or write during reads', async () => {
+    const binding = new MemoryKV();
+    const put = jest.spyOn(binding, 'put');
+    const storage = new CloudflareKVStorage(binding);
+    const config = { ConfigFile: '', SourceConfig: [] } as never;
+    await storage.setAdminConfig(config);
+    await storage.setAdminConfig(config);
+    await storage.getAdminConfig();
+    await storage.getAllFavorites('alice');
+    expect(put).toHaveBeenCalledTimes(1);
+    await storage.addSearchHistory('alice', 'Example');
+    await storage.addSearchHistory('alice', 'Example');
+    expect(put).toHaveBeenCalledTimes(2);
+  });
   it('round-trips admin configuration through KV', async () => {
     const storage = new CloudflareKVStorage(new MemoryKV());
     const config = {

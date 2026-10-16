@@ -24,7 +24,7 @@
 - 🔍 **多源聚合搜索**：一次搜索立刻返回全源结果。
 - 📄 **丰富详情页**：支持剧集列表、演员、年份、简介等完整信息展示。
 - ▶️ **流畅在线播放**：集成 HLS.js & ArtPlayer。
-- ❤️ **收藏 + 继续观看**：支持 Kvrocks/Redis/Upstash/Cloudflare KV 存储，多端同步进度。
+- ❤️ **收藏 + 继续观看**：支持 Kvrocks/Redis/Upstash/Cloudflare KV/D1 存储，多端同步进度。
 - 📱 **PWA**：离线缓存、安装到桌面/主屏，移动端原生体验。
 - 🌗 **响应式布局**：桌面侧边栏 + 移动底部导航，自适应各种屏幕尺寸。
 - 👿 **智能去广告**：自动跳过视频中的切片广告（实验性）。
@@ -45,7 +45,7 @@
 - [技术栈](#技术栈)
 - [部署](#部署)
   - [一键部署](#zeabur-一键部署)
-  - [Cloudflare Workers + KV](#cloudflare-workers--kv当前生产部署)
+  - [Cloudflare Workers + D1](#cloudflare-workers--d1)
   - [Docker 部署](#Kvrocks-存储推荐)
 - [配置文件](#配置文件)
 - [订阅](#订阅)
@@ -73,7 +73,9 @@
 
 本项目支持 **Docker 平台** 和 **Cloudflare Workers** 部署。
 
-### Cloudflare Workers + KV（当前生产部署）
+### Cloudflare Workers + D1
+
+已修复读取配置时写回、直播重复保存和未鉴权的定时刷新，并降低播放进度的自动写入频率。新增 D1 支持，启用前需配置绑定、建表并迁移数据。[查看 D1 配置及 KV 数据迁移步骤](docs/cloudflare-d1.md)。现有 KV 部署仍然兼容。
 
 当前生产实例由 Cloudflare Workers Builds 从 GitHub 仓库
 [`Swebersmith/LunaTV`](https://github.com/Swebersmith/LunaTV) 的 `main` 分支自动构建和发布。
@@ -84,21 +86,21 @@ Cloudflare 中的构建与运行配置如下：
 - Worker 名称：`lunatv`
 - 构建命令：`pnpm cf:build`
 - 手动部署命令：`pnpm exec wrangler deploy --keep-vars`
-- KV 命名空间：`lunatv`
-- KV 绑定名称：`LUNATV_KV`
+- D1 绑定名称：`LUNATV_D1`（启用 D1 时配置）
+- KV 绑定名称：`LUNATV_KV`（使用 KV 时配置）
 - 管理面板：`/admin`
 
 在 Worker 的 **Settings > Variables and Secrets** 中为 Production 配置以下变量：
 
 ```env
-NEXT_PUBLIC_STORAGE_TYPE=cloudflare-kv
+NEXT_PUBLIC_STORAGE_TYPE=cloudflare-d1
 USERNAME=admin
 PASSWORD=replace-with-a-strong-secret
 ```
 
 `PASSWORD` 必须以 Secret 形式保存。`USERNAME` 可以改为自己的管理员账号。
-创建或迁移到其他 Cloudflare 账号时，需要在 `wrangler.jsonc` 中将 `LUNATV_KV`
-绑定到该账号中的 KV 命名空间；不要将密码、Token 或个人域名提交到仓库。
+启用 D1 时在 `wrangler.jsonc` 的 `vars` 中设置存储类型。`cf:build` 自动从该配置读取存储类型，确保构建和运行配置一致。
+创建或迁移到其他 Cloudflare 账号时，需要替换 `wrangler.jsonc` 中的数据库 ID 并执行建表迁移；不要将密码、Token 或个人域名提交到仓库。
 
 ### zeabur 一键部署
 
@@ -358,8 +360,10 @@ dockge/komodo 等 docker compose UI 也有自动更新功能
 | SITE_BASE                           | 站点 url              |       形如 https://example.com                  | 空                                                                                                                     |
 | NEXT_PUBLIC_SITE_NAME               | 站点名称                                     | 任意字符串                       | MoonTV                                                                                                                     |
 | ANNOUNCEMENT                        | 站点公告                                     | 任意字符串                       | 本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。 |
-| NEXT_PUBLIC_STORAGE_TYPE            | 播放记录/收藏的存储方式                      | redis、kvrocks、upstash、cloudflare-kv | 默认 localstorage；Cloudflare 部署使用 cloudflare-kv                                                                        |
+| NEXT_PUBLIC_STORAGE_TYPE            | 播放记录/收藏的存储方式                      | redis、kvrocks、upstash、cloudflare-kv、cloudflare-d1 | 默认 localstorage；Cloudflare 推荐使用 cloudflare-d1，需先配置绑定和建表                                                                        |
 | LUNATV_KV                           | Cloudflare Workers KV 资源绑定               | KV binding 名称                    | 空；使用 cloudflare-kv 时必须绑定到 KV 命名空间                                                                              |
+| LUNATV_D1                           | Cloudflare D1 数据库绑定                     | D1 binding 名称                    | 使用 cloudflare-d1 时必须绑定并执行 migrations |
+| CRON_SECRET                         | 定时刷新接口密钥                             | Worker Secret                      | 未设置时关闭 /api/cron；调用方通过 Bearer 认证 |
 | KVROCKS_URL                           | kvrocks 连接 url                               | 连接 url                         | 空                                                                                                                         |
 | REDIS_URL                           | redis 连接 url                               | 连接 url                         | 空                                                                                                                         |
 | UPSTASH_URL                         | upstash redis 连接 url                       | 连接 url                         | 空                                                                                                                         |

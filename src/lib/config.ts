@@ -310,7 +310,8 @@ export async function getConfig(): Promise<AdminConfig> {
   }
   adminConfig = configSelfCheck(adminConfig);
   cachedConfig = adminConfig;
-  db.saveAdminConfig(cachedConfig);
+  // Reads (including cold starts and public server-config probes) must never
+  // consume writes. Explicit admin changes persist the normalized config.
   return cachedConfig;
 }
 

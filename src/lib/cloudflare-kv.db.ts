@@ -69,7 +69,9 @@ export class CloudflareKVStorage implements IStorage {
   }
 
   private async write<T>(key: string, value: T): Promise<void> {
-    await this.kv.put(key, JSON.stringify(value));
+    const serialized = JSON.stringify(value);
+    if ((await this.kv.get(key)) === serialized) return;
+    await this.kv.put(key, serialized);
   }
 
   private playRecordsKey(userName: string): string {

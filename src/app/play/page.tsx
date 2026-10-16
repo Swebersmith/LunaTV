@@ -14,6 +14,7 @@ import {
   deleteSkipConfig,
   generateStorageKey,
   getAllPlayRecords,
+  getPlayProgressSaveInterval,
   getSkipConfig,
   isFavorited,
   saveFavorite,
@@ -199,6 +200,7 @@ function PlayPageClient() {
   // 播放进度保存相关
   const saveIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveTimeRef = useRef<number>(0);
+  const lastSavedProgressRef = useRef<string>('');
 
   const artPlayerRef = useRef<any>(null);
   const artRef = useRef<HTMLDivElement | null>(null);
@@ -1090,23 +1092,36 @@ function PlayPageClient() {
     const currentTime = player.currentTime || 0;
     const duration = player.duration || 0;
 
-    // 如果播放时间太短（少于5秒）或者视频时长无效，不保存
+    // 视频尚未开始或时长无效时不保存。
     if (currentTime < 1 || !duration) {
       return;
     }
 
+    const record = {
+      title: videoTitleRef.current,
+      source_name: detailRef.current?.source_name || '',
+      year: detailRef.current?.year,
+      cover: detailRef.current?.poster || '',
+      index: currentEpisodeIndexRef.current + 1, // 转换为1基索引
+      total_episodes: detailRef.current?.episodes.length || 1,
+      play_time: Math.floor(currentTime),
+      total_time: Math.floor(duration),
+      search_title: searchTitle,
+    };
+    const signature = JSON.stringify([
+      currentSourceRef.current,
+      currentIdRef.current,
+      record,
+    ]);
+    if (signature === lastSavedProgressRef.current) return;
+    const previousSignature = lastSavedProgressRef.current;
+    // Claim before awaiting, so simultaneous pause/timeupdate/visibility events
+    // cannot send duplicate writes of the same position.
+    lastSavedProgressRef.current = signature;
     try {
       await savePlayRecord(currentSourceRef.current, currentIdRef.current, {
-        title: videoTitleRef.current,
-        source_name: detailRef.current?.source_name || '',
-        year: detailRef.current?.year,
-        cover: detailRef.current?.poster || '',
-        index: currentEpisodeIndexRef.current + 1, // 转换为1基索引
-        total_episodes: detailRef.current?.episodes.length || 1,
-        play_time: Math.floor(currentTime),
-        total_time: Math.floor(duration),
+        ...record,
         save_time: Date.now(),
-        search_title: searchTitle,
       });
 
       lastSaveTimeRef.current = Date.now();
@@ -1117,6 +1132,9 @@ function PlayPageClient() {
         progress: `${Math.floor(currentTime)}/${Math.floor(duration)}`,
       });
     } catch (err) {
+      if (lastSavedProgressRef.current === signature) {
+        lastSavedProgressRef.current = previousSignature;
+      }
       console.error('保存播放进度失败:', err);
     }
   };
@@ -1628,10 +1646,7 @@ function PlayPageClient() {
 
       artPlayerRef.current.on('video:timeupdate', () => {
         const now = Date.now();
-        let interval = 5000;
-        if (process.env.NEXT_PUBLIC_STORAGE_TYPE === 'upstash') {
-          interval = 20000;
-        }
+        const interval = getPlayProgressSaveInterval();
         if (now - lastSaveTimeRef.current > interval) {
           saveCurrentPlayProgress();
           lastSaveTimeRef.current = now;

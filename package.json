@@ -12,11 +12,12 @@
     "typecheck": "tsc --noEmit --incremental false",
     "test:watch": "jest --watch",
     "test": "jest",
+    "test:migration": "node --test scripts/migrate-kv-to-d1.test.mjs",
     "format": "prettier -w .",
     "format:check": "prettier -c .",
     "gen:manifest": "node scripts/generate-manifest.js",
     "postbuild": "echo 'Build completed - sitemap generation disabled'",
-    "cf:build": "opennextjs-cloudflare build",
+    "cf:build": "node scripts/cloudflare-build.mjs",
     "cf:deploy": "pnpm cf:build && wrangler deploy --keep-vars",
     "prepare": "husky install"
   },
