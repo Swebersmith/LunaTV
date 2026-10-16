@@ -2,15 +2,17 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
+import { AdminConfig } from '@/lib/admin.types';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { parseVideoSourceInput } from '@/lib/source-input';
 import { getStorageType } from '@/lib/storage-type';
 
 export const runtime = 'nodejs';
 
 // 支持的操作类型
-type Action = 'add' | 'disable' | 'enable' | 'delete' | 'sort' | 'batch_disable' | 'batch_enable' | 'batch_delete';
+type Action = 'add' | 'edit' | 'disable' | 'enable' | 'delete' | 'sort' | 'batch_disable' | 'batch_enable' | 'batch_delete';
 
 interface BaseBody {
   action?: Action;
@@ -38,13 +40,13 @@ export async function POST(request: NextRequest) {
     const username = authInfo.username;
 
     // 基础校验
-    const ACTIONS: Action[] = ['add', 'disable', 'enable', 'delete', 'sort', 'batch_disable', 'batch_enable', 'batch_delete'];
+    const ACTIONS: Action[] = ['add', 'edit', 'disable', 'enable', 'delete', 'sort', 'batch_disable', 'batch_enable', 'batch_delete'];
     if (!username || !action || !ACTIONS.includes(action)) {
       return NextResponse.json({ error: '参数格式错误' }, { status: 400 });
     }
 
     // 获取配置与存储
-    const adminConfig = await getConfig();
+    const adminConfig: AdminConfig = JSON.parse(JSON.stringify(await getConfig()));
 
     // 权限与身份校验
     if (username !== process.env.USERNAME) {
@@ -56,17 +58,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    let sourceInput = { key: '', name: '', api: '', detail: '', note: '' };
+    if (action === 'add' || action === 'edit') {
+      try {
+        sourceInput = parseVideoSourceInput(body);
+      } catch (error) {
+        return NextResponse.json({ error: (error as Error).message }, { status: 400 });
+      }
+    }
+
     switch (action) {
       case 'add': {
-        const { key, name, api, detail } = body as {
-          key?: string;
-          name?: string;
-          api?: string;
-          detail?: string;
-        };
-        if (!key || !name || !api) {
-          return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
-        }
+        const { key, name, api, detail, note } = sourceInput;
         if (adminConfig.SourceConfig.some((s) => s.key === key)) {
           return NextResponse.json({ error: '该源已存在' }, { status: 400 });
         }
@@ -75,9 +78,17 @@ export async function POST(request: NextRequest) {
           name,
           api,
           detail,
+          note,
           from: 'custom',
           disabled: false,
         });
+        break;
+      }
+      case 'edit': {
+        const input = sourceInput;
+        const entry = adminConfig.SourceConfig.find((s: { key: string }) => s.key === input.key);
+        if (!entry) return NextResponse.json({ error: '源不存在' }, { status: 404 });
+        Object.assign(entry, input, { overridden: true });
         break;
       }
       case 'disable': {
@@ -228,7 +239,7 @@ export async function POST(request: NextRequest) {
     await db.saveAdminConfig(adminConfig);
 
     return NextResponse.json(
-      { ok: true },
+      { ok: true, sources: adminConfig.SourceConfig },
       {
         headers: {
           'Cache-Control': 'no-store',

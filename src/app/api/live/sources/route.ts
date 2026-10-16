@@ -20,8 +20,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: liveSources
-    });
+      data: liveSources.map(({ key, name, url, ua, epg, from, channelNumber }) => ({ key, name, url, ua, epg, from, channelNumber }))
+    }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {
     console.error('获取直播源失败:', error);
     return NextResponse.json(

@@ -29,7 +29,8 @@ async function searchWithCache(
   timeoutMs = 8000
 ): Promise<{ results: SearchResult[]; pageCount?: number; failed?: boolean }> {
   // 先查缓存
-  const cached = getCachedSearchPage(apiSite.key, query, page);
+  const cacheSource = JSON.stringify([apiSite.key, apiSite.api, apiSite.name]);
+  const cached = getCachedSearchPage(cacheSource, query, page);
   if (cached) {
     if (cached.status === 'ok') {
       return { results: cached.data, pageCount: cached.pageCount };
@@ -50,7 +51,7 @@ async function searchWithCache(
 
     if (!response.ok) {
       if (response.status === 403) {
-        setCachedSearchPage(apiSite.key, query, page, 'forbidden', []);
+        setCachedSearchPage(cacheSource, query, page, 'forbidden', []);
       }
       return { results: [], failed: true };
     }
@@ -84,7 +85,7 @@ async function searchWithCache(
             const episode_title_url = title_url.split('$');
             if (
               episode_title_url.length === 2 &&
-              episode_title_url[1].endsWith('.m3u8')
+              /\.m3u8(?:[?#]|$)/i.test(episode_title_url[1])
             ) {
               matchTitles.push(episode_title_url[0]);
               matchEpisodes.push(episode_title_url[1]);
@@ -120,13 +121,13 @@ async function searchWithCache(
 
     const pageCount = page === 1 ? data.pagecount || 1 : undefined;
     // 写入缓存（成功）
-    setCachedSearchPage(apiSite.key, query, page, 'ok', results, pageCount);
+    setCachedSearchPage(cacheSource, query, page, 'ok', results, pageCount);
     return { results, pageCount };
   } catch (error: any) {
     // 识别被 AbortController 中止（超时）
     const aborted = error?.name === 'AbortError' || error?.code === 20 || error?.message?.includes('aborted');
     if (aborted) {
-      setCachedSearchPage(apiSite.key, query, page, 'timeout', []);
+      setCachedSearchPage(cacheSource, query, page, 'timeout', []);
     }
     return { results: [], failed: true };
   } finally {
@@ -135,29 +136,31 @@ async function searchWithCache(
 }
 
 // The collection follows each provider's pagination without changing general search limits.
+function videoApiUrl(api: string, parameters: Record<string, string>): string {
+  const url = new URL(api);
+  Object.entries(parameters).forEach(([key, value]) => url.searchParams.set(key, value));
+  return url.toString();
+}
+
 export async function searchPageFromApi(apiSite: ApiSite, query: string, page: number) {
-  const url = page === 1
-    ? apiSite.api + API_CONFIG.search.path + encodeURIComponent(query)
-    : apiSite.api + API_CONFIG.search.pagePath.replace('{query}', encodeURIComponent(query)).replace('{page}', String(page));
+  const url = videoApiUrl(apiSite.api, { ac: 'videolist', wd: query, ...(page > 1 ? { pg: String(page) } : {}) });
   return searchWithCache(apiSite, query, page, url);
 }
 
 export async function searchFromApi(
   apiSite: ApiSite,
-  query: string
+  query: string,
+  maxPages?: number
 ): Promise<SearchResult[]> {
   try {
-    const apiBaseUrl = apiSite.api;
-    const apiUrl =
-      apiBaseUrl + API_CONFIG.search.path + encodeURIComponent(query);
+    const apiUrl = videoApiUrl(apiSite.api, { ac: 'videolist', wd: query });
 
     // 使用新的缓存搜索函数处理第一页
     const firstPageResult = await searchWithCache(apiSite, query, 1, apiUrl, 8000);
-    const results = firstPageResult.results;
+    const results = firstPageResult.results.slice();
     const pageCountFromFirst = firstPageResult.pageCount;
 
-    const config = await getConfig();
-    const MAX_SEARCH_PAGES: number = config.SiteConfig.SearchDownstreamMaxPage;
+    const MAX_SEARCH_PAGES = maxPages ?? (await getConfig()).SiteConfig.SearchDownstreamMaxPage;
 
     // 获取总页数
     const pageCount = pageCountFromFirst || 1;
@@ -169,11 +172,7 @@ export async function searchFromApi(
       const additionalPagePromises = [];
 
       for (let page = 2; page <= pagesToFetch + 1; page++) {
-        const pageUrl =
-          apiBaseUrl +
-          API_CONFIG.search.pagePath
-            .replace('{query}', encodeURIComponent(query))
-            .replace('{page}', page.toString());
+        const pageUrl = videoApiUrl(apiSite.api, { ac: 'videolist', wd: query, pg: String(page) });
 
         const pagePromise = (async () => {
           // 使用新的缓存搜索函数处理分页
@@ -212,7 +211,7 @@ export async function getDetailFromApi(
     return handleSpecialSourceDetail(id, apiSite);
   }
 
-  const detailUrl = `${apiSite.api}${API_CONFIG.detail.path}${id}`;
+  const detailUrl = videoApiUrl(apiSite.api, { ac: 'videolist', ids: id });
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
@@ -256,7 +255,7 @@ export async function getDetailFromApi(
         const episode_title_url = title_url.split('$');
         if (
           episode_title_url.length === 2 &&
-          episode_title_url[1].endsWith('.m3u8')
+          /\.m3u8(?:[?#]|$)/i.test(episode_title_url[1])
         ) {
           matchTitles.push(episode_title_url[0]);
           matchEpisodes.push(episode_title_url[1]);

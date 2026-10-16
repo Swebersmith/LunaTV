@@ -29,17 +29,14 @@ export async function GET(request: NextRequest) {
     // 生成建议
     const suggestions = await generateSuggestions(config, query, authInfo.username);
 
-    // 从配置中获取缓存时间，如果没有配置则使用默认值300秒（5分钟）
-    const cacheTime = config.SiteConfig.SiteInterfaceCacheTime || 300;
+
 
     return NextResponse.json(
       { suggestions },
       {
         headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Netlify-Vary': 'query',
+          'Cache-Control': 'private, no-store',
+          Vary: 'Cookie',
         },
       }
     );
@@ -58,13 +55,13 @@ async function generateSuggestions(config: AdminConfig, query: string, username:
 > {
   const queryLower = query.toLowerCase();
 
-  const apiSites = await getAvailableApiSites(username);
+  const apiSites = await getAvailableApiSites(username, config);
   let realKeywords: string[] = [];
 
   if (apiSites.length > 0) {
     // 取第一个可用的数据源进行搜索
     const firstSite = apiSites[0];
-    const results = await searchFromApi(firstSite, query);
+    const results = await searchFromApi(firstSite, query, 1);
 
     realKeywords = Array.from(
       new Set(

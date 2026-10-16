@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
+import { getAvailableApiSites, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
 import { yellowWords } from '@/lib/yellow';
 
@@ -19,22 +19,20 @@ export async function GET(request: NextRequest) {
   const resourceId = searchParams.get('resourceId');
 
   if (!query || !resourceId) {
-    const cacheTime = await getCacheTime();
+
     return NextResponse.json(
       { result: null, error: '缺少必要参数: q 或 resourceId' },
       {
         headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Netlify-Vary': 'query',
+          'Cache-Control': 'private, no-store',
+          Vary: 'Cookie',
         },
       }
     );
   }
 
   const config = await getConfig();
-  const apiSites = await getAvailableApiSites(authInfo.username);
+  const apiSites = await getAvailableApiSites(authInfo.username, config);
 
   try {
     // 根据 resourceId 查找对应的 API 站点
@@ -49,7 +47,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const results = await searchFromApi(targetSite, query);
+    const results = await searchFromApi(targetSite, query, config.SiteConfig.SearchDownstreamMaxPage);
     let result = results.filter((r) => r.title === query);
     if (!config.SiteConfig.DisableYellowFilter) {
       result = result.filter((result) => {
@@ -57,7 +55,7 @@ export async function GET(request: NextRequest) {
         return !yellowWords.some((word: string) => typeName.includes(word));
       });
     }
-    const cacheTime = await getCacheTime();
+
 
     if (result.length === 0) {
       return NextResponse.json(
@@ -72,10 +70,8 @@ export async function GET(request: NextRequest) {
         { results: result },
         {
           headers: {
-            'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-            'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-            'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-            'Netlify-Vary': 'query',
+            'Cache-Control': 'private, no-store',
+          Vary: 'Cookie',
           },
         }
       );

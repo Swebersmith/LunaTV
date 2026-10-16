@@ -16,7 +16,9 @@ export async function GET(request: NextRequest) {
   try {
     const apiSites = await getAvailableApiSites(authInfo.username);
 
-    return NextResponse.json(apiSites);
+    return NextResponse.json(apiSites.map(({ key, name, api, detail }) => ({ key, name, api, detail })), {
+      headers: { 'Cache-Control': 'private, no-store', Vary: 'Cookie' },
+    });
   } catch (error) {
     return NextResponse.json({ error: '获取资源失败' }, { status: 500 });
   }

@@ -7,6 +7,7 @@ import { getConfig, refineConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { fetchVideoDetail } from '@/lib/fetchVideoDetail';
 import { refreshLiveChannels } from '@/lib/live';
+import { LiveChannelCount, mergeLiveChannelCounts } from '@/lib/live-config';
 import { getStorageType } from '@/lib/storage-type';
 import { SearchResult } from '@/lib/types';
 
@@ -59,7 +60,7 @@ async function cronJob() {
 
 async function refreshAllLiveChannels() {
   const config = await getConfig();
-  let changed = false;
+  const updates: LiveChannelCount[] = [];
 
   // 并发刷新所有启用的直播源
   const refreshPromises = (config.LiveConfig || [])
@@ -67,10 +68,7 @@ async function refreshAllLiveChannels() {
     .map(async (liveInfo) => {
       try {
         const nums = await refreshLiveChannels(liveInfo);
-        if (liveInfo.channelNumber !== nums) {
-          liveInfo.channelNumber = nums;
-          changed = true;
-        }
+        updates.push({ ...liveInfo, count: nums });
       } catch (error) {
         console.error(
           `刷新直播源失败 [${liveInfo.name || liveInfo.key}]:`,
@@ -83,7 +81,10 @@ async function refreshAllLiveChannels() {
   await Promise.all(refreshPromises);
 
   // 保存配置
-  if (changed) await db.saveAdminConfig(config);
+  if (updates.length) {
+    const latest = await getConfig();
+    if (mergeLiveChannelCounts(latest, updates)) await db.saveAdminConfig(latest);
+  }
 }
 
 async function refreshConfig() {
@@ -95,7 +96,8 @@ async function refreshConfig() {
     config.ConfigSubscribtion.AutoUpdate
   ) {
     try {
-      const response = await fetch(config.ConfigSubscribtion.URL);
+      const subscriptionUrl = config.ConfigSubscribtion.URL;
+      const response = await fetch(subscriptionUrl);
 
       if (!response.ok) {
         throw new Error(`请求失败: ${response.status} ${response.statusText}`);
@@ -119,6 +121,8 @@ async function refreshConfig() {
       } catch (e) {
         throw new Error('配置文件格式错误，请检查 JSON 语法');
       }
+      config = await getConfig();
+      if (config.ConfigSubscribtion.URL !== subscriptionUrl) return;
       config.ConfigFile = decodedContent;
       config.ConfigSubscribtion.LastCheck = new Date().toISOString();
       config = refineConfig(config);

@@ -1,7 +1,6 @@
 /* eslint-disable no-constant-condition */
 
 import { getConfig } from "@/lib/config";
-import { db } from "@/lib/db";
 
 const defaultUA = 'AptvPlayer/1.4.10'
 
@@ -26,25 +25,22 @@ export interface LiveChannels {
 }
 
 const cachedLiveChannels: { [key: string]: LiveChannels } = {};
+const cachedFingerprints: { [key: string]: string } = {};
+const liveFingerprint = (source: { url: string; ua?: string; epg?: string }) => JSON.stringify([source.url, source.ua || '', source.epg || '']);
 
 export function deleteCachedLiveChannels(key: string) {
   delete cachedLiveChannels[key];
+  delete cachedFingerprints[key];
 }
 
 export async function getCachedLiveChannels(key: string): Promise<LiveChannels | null> {
-  if (!cachedLiveChannels[key]) {
-    const config = await getConfig();
-    const liveInfo = config.LiveConfig?.find(live => live.key === key);
-    if (!liveInfo) {
-      return null;
-    }
+  const config = await getConfig();
+  const liveInfo = config.LiveConfig?.find(live => live.key === key && !live.disabled);
+  if (!liveInfo) return null;
+  if (!cachedLiveChannels[key] || cachedFingerprints[key] !== liveFingerprint(liveInfo)) {
     const channelNum = await refreshLiveChannels(liveInfo);
     if (channelNum === 0) {
       return null;
-    }
-    if (liveInfo.channelNumber !== channelNum) {
-      liveInfo.channelNumber = channelNum;
-      await db.saveAdminConfig(config);
     }
   }
   return cachedLiveChannels[key] || null;
@@ -65,10 +61,12 @@ export async function refreshLiveChannels(liveInfo: {
   }
   const ua = liveInfo.ua || defaultUA;
   const response = await fetch(liveInfo.url, {
+    signal: AbortSignal.timeout(15000),
     headers: {
       'User-Agent': ua,
     },
   });
+  if (!response.ok) throw new Error(`直播源请求失败：${response.status}`);
   const data = await response.text();
   const result = parseM3U(liveInfo.key, data);
   const epgUrl = liveInfo.epg || result.tvgUrl;
@@ -79,6 +77,7 @@ export async function refreshLiveChannels(liveInfo: {
     epgUrl: epgUrl,
     epgs: epgs,
   };
+  cachedFingerprints[liveInfo.key] = liveFingerprint(liveInfo);
   return result.channels.length;
 }
 
@@ -98,6 +97,7 @@ async function parseEpg(epgUrl: string, ua: string, tvgIds: string[]): Promise<{
 
   try {
     const response = await fetch(epgUrl, {
+      signal: AbortSignal.timeout(15000),
       headers: {
         'User-Agent': ua,
       },

@@ -71,7 +71,7 @@ export function setCachedSearchPage(
 
   const key = makeSearchCacheKey(sourceKey, query, page);
   SEARCH_CACHE.set(key, {
-    expiresAt: now + SEARCH_CACHE_TTL_MS,
+    expiresAt: now + (status === 'ok' ? SEARCH_CACHE_TTL_MS : 10000),
     status,
     data,
     pageCount,

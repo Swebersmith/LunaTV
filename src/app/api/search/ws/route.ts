@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   }
 
   const config = await getConfig();
-  const apiSites = await getAvailableApiSites(authInfo.username);
+  const apiSites = await getAvailableApiSites(authInfo.username, config);
 
   // 共享状态
   let streamClosed = false;
@@ -69,6 +69,11 @@ export async function GET(request: NextRequest) {
       if (!safeEnqueue(encoder.encode(startEvent))) {
         return; // 连接已关闭，提前退出
       }
+      if (apiSites.length === 0) {
+        safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'complete', completedSources: 0, totalResults: 0 })}\n\n`));
+        controller.close();
+        return;
+      }
 
       // 记录已完成的源数量
       let completedSources = 0;
@@ -79,7 +84,7 @@ export async function GET(request: NextRequest) {
         try {
           // 添加超时控制
           const searchPromise = Promise.race([
-            searchFromApi(site, query),
+            searchFromApi(site, query, config.SiteConfig.SearchDownstreamMaxPage),
             new Promise((_, reject) =>
               setTimeout(() => reject(new Error(`${site.name} timeout`)), 20000)
             ),
@@ -178,7 +183,8 @@ export async function GET(request: NextRequest) {
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'private, no-store',
+      Vary: 'Cookie',
       'Connection': 'keep-alive',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET',

@@ -4,12 +4,14 @@ import { db } from '@/lib/db';
 
 import { AdminConfig } from './admin.types';
 import { DEFAULT_SITE_NAME } from './branding';
+import { getStorageType } from './storage-type';
 
 export interface ApiSite {
   key: string;
   api: string;
   name: string;
   detail?: string;
+  note?: string;
 }
 
 export interface LiveCfg {
@@ -17,6 +19,7 @@ export interface LiveCfg {
   url: string;
   ua?: string;
   epg?: string; // 节目单
+  note?: string;
 }
 
 interface ConfigFileStruct {
@@ -76,10 +79,13 @@ export function refineConfig(adminConfig: AdminConfig): AdminConfig {
   apiSitesFromFile.forEach(([key, site]) => {
     const existingSource = currentApiSites.get(key);
     if (existingSource) {
-      // 如果已存在，只覆盖 name、api、detail 和 from
-      existingSource.name = site.name;
-      existingSource.api = site.api;
-      existingSource.detail = site.detail;
+      // Dashboard edits remain local overrides when subscriptions refresh.
+      if (!existingSource.overridden) {
+        existingSource.name = site.name;
+        existingSource.api = site.api;
+        existingSource.detail = site.detail;
+        existingSource.note = site.note ?? existingSource.note;
+      }
       existingSource.from = 'config';
     } else {
       // 如果不存在，创建新条目
@@ -88,6 +94,7 @@ export function refineConfig(adminConfig: AdminConfig): AdminConfig {
         name: site.name,
         api: site.api,
         detail: site.detail,
+        note: site.note,
         from: 'config',
         disabled: false,
       });
@@ -150,10 +157,14 @@ export function refineConfig(adminConfig: AdminConfig): AdminConfig {
   livesFromFile.forEach(([key, site]) => {
     const existingLive = currentLives.get(key);
     if (existingLive) {
-      existingLive.name = site.name;
-      existingLive.url = site.url;
-      existingLive.ua = site.ua;
-      existingLive.epg = site.epg;
+      if (!existingLive.overridden) {
+        existingLive.name = site.name;
+        existingLive.url = site.url;
+        existingLive.ua = site.ua;
+        existingLive.epg = site.epg;
+        existingLive.note = site.note ?? existingLive.note;
+      }
+      existingLive.from = 'config';
     } else {
       // 如果不存在，创建新条目
       currentLives.set(key, {
@@ -162,6 +173,7 @@ export function refineConfig(adminConfig: AdminConfig): AdminConfig {
         url: site.url,
         ua: site.ua,
         epg: site.epg,
+        note: site.note,
         channelNumber: 0,
         from: 'config',
         disabled: false,
@@ -257,6 +269,7 @@ async function getInitConfig(configFile: string, subConfig: {
       name: site.name,
       api: site.api,
       detail: site.detail,
+      note: site.note,
       from: 'config',
       disabled: false,
     });
@@ -284,6 +297,7 @@ async function getInitConfig(configFile: string, subConfig: {
       url: live.url,
       ua: live.ua,
       epg: live.epg,
+      note: live.note,
       channelNumber: 0,
       from: 'config',
       disabled: false,
@@ -294,8 +308,8 @@ async function getInitConfig(configFile: string, subConfig: {
 }
 
 export async function getConfig(): Promise<AdminConfig> {
-  // 直接使用内存缓存
-  if (cachedConfig) {
+  // Shared storage can change on another Worker. Only local defaults are cached.
+  if (cachedConfig && getStorageType() === 'localstorage') {
     return cachedConfig;
   }
 
@@ -305,6 +319,7 @@ export async function getConfig(): Promise<AdminConfig> {
     adminConfig = await db.getAdminConfig();
   } catch (e) {
     console.error('获取管理员配置失败:', e);
+    if (getStorageType() !== 'localstorage') throw e;
   }
 
   // db 中无配置，执行一次初始化
@@ -426,8 +441,8 @@ export async function getCacheTime(): Promise<number> {
   return config.SiteConfig.SiteInterfaceCacheTime || 7200;
 }
 
-export async function getAvailableApiSites(user?: string): Promise<ApiSite[]> {
-  const config = await getConfig();
+export async function getAvailableApiSites(user?: string, snapshot?: AdminConfig): Promise<ApiSite[]> {
+  const config = snapshot ?? await getConfig();
   const allApiSites = config.SourceConfig.filter((s) => !s.disabled);
 
   if (!user) {

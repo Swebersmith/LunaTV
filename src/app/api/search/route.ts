@@ -3,11 +3,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
+import { getAvailableApiSites, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
 import { yellowWords } from '@/lib/yellow';
 
 export const runtime = 'nodejs';
+const responseHeaders = { 'Cache-Control': 'private, no-store', Vary: 'Cookie' };
 
 export async function GET(request: NextRequest) {
   const authInfo = getAuthInfoFromCookie(request);
@@ -19,27 +20,16 @@ export async function GET(request: NextRequest) {
   const query = searchParams.get('q');
 
   if (!query) {
-    const cacheTime = await getCacheTime();
-    return NextResponse.json(
-      { results: [] },
-      {
-        headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Netlify-Vary': 'query',
-        },
-      }
-    );
+    return NextResponse.json({ results: [] }, { headers: responseHeaders });
   }
 
   const config = await getConfig();
-  const apiSites = await getAvailableApiSites(authInfo.username);
+  const apiSites = await getAvailableApiSites(authInfo.username, config);
 
   // 添加超时控制和错误处理，避免慢接口拖累整体响应
   const searchPromises = apiSites.map((site) =>
     Promise.race([
-      searchFromApi(site, query),
+      searchFromApi(site, query, config.SiteConfig.SearchDownstreamMaxPage),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error(`${site.name} timeout`)), 20000)
       ),
@@ -61,22 +51,16 @@ export async function GET(request: NextRequest) {
         return !yellowWords.some((word: string) => typeName.includes(word));
       });
     }
-    const cacheTime = await getCacheTime();
 
     if (flattenedResults.length === 0) {
       // no cache if empty
-      return NextResponse.json({ results: [] }, { status: 200 });
+      return NextResponse.json({ results: [] }, { status: 200, headers: responseHeaders });
     }
 
     return NextResponse.json(
       { results: flattenedResults },
       {
-        headers: {
-          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
-          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
-          'Netlify-Vary': 'query',
-        },
+        headers: responseHeaders,
       }
     );
   } catch (error) {

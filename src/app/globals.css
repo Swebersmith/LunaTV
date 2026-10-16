@@ -280,6 +280,15 @@ html.dark body {
   word-break: normal;
   user-select: text;
 }
+@media (min-width: 768px) {
+  .source-list-table [data-source-cell='actions'],
+  .source-list-table thead th:last-child {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--crayon-panel);
+  }
+}
 @media (max-width: 767px) {
   .crayon-video-caption {
     text-align: left;
@@ -297,7 +306,8 @@ html.dark body {
   .crayon-video-source {
     font-size: 11px;
   }
-  [data-table='source-list'] {
+  [data-table='source-list'],
+  [data-table='live-source-list'] {
     max-height: 65vh;
     padding: 10px;
     background: var(--crayon-paper);
@@ -319,6 +329,7 @@ html.dark body {
       '. key key'
       'api api api'
       'detail detail detail'
+      'note note note'
       'status status validation'
       'actions actions actions';
     gap: 12px 8px;
@@ -362,6 +373,33 @@ html.dark body {
   .source-list-table [data-source-cell='detail'] {
     grid-area: detail;
   }
+  .source-list-table [data-source-cell='note'] {
+    grid-area: note;
+  }
+  .source-list-table--live .source-list-row {
+    grid-template-areas:
+      'name name drag'
+      'key key key'
+      'api api api'
+      'detail detail detail'
+      'ua ua ua'
+      'note note note'
+      'status status channels'
+      'actions actions actions';
+  }
+  .source-list-table [data-source-cell='ua'] {
+    grid-area: ua;
+  }
+  .source-list-table [data-source-cell='channels'] {
+    grid-area: channels;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .source-editor input,
+  .source-editor textarea,
+  .crayon-search input#searchInput {
+    font-size: 16px;
+  }
   .source-list-table [data-label]::before {
     content: attr(data-label);
     display: block;
@@ -376,6 +414,7 @@ html.dark body {
   }
   .source-list-table [data-source-cell='status'] {
     grid-area: status;
+    white-space: nowrap;
   }
   .source-list-table [data-source-cell='validation'] {
     grid-area: validation;

@@ -6,6 +6,7 @@ import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { refreshLiveChannels } from '@/lib/live';
+import { LiveChannelCount, mergeLiveChannelCounts } from '@/lib/live-config';
 
 export const runtime = 'nodejs';
 
@@ -14,6 +15,7 @@ export async function POST(request: NextRequest) {
     // 权限检查
     const authInfo = getAuthInfoFromCookie(request);
     const username = authInfo?.username;
+    if (!username) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const config = await getConfig();
     if (username !== process.env.USERNAME) {
       // 管理员
@@ -26,27 +28,29 @@ export async function POST(request: NextRequest) {
     }
 
     // 并发刷新所有启用的直播源
+    const updates: LiveChannelCount[] = [];
     const refreshPromises = (config.LiveConfig || [])
       .filter(liveInfo => !liveInfo.disabled)
       .map(async (liveInfo) => {
         try {
           const nums = await refreshLiveChannels(liveInfo);
-          liveInfo.channelNumber = nums;
+          updates.push({ ...liveInfo, count: nums });
         } catch (error) {
-          liveInfo.channelNumber = 0;
+          // Keep the previous count when a provider is temporarily unreachable.
         }
       });
 
     // 等待所有刷新任务完成
     await Promise.all(refreshPromises);
 
-    // 保存配置
-    await db.saveAdminConfig(config);
+    const latest = await getConfig();
+    if (mergeLiveChannelCounts(latest, updates)) await db.saveAdminConfig(latest);
 
     return NextResponse.json({
       success: true,
       message: '直播源刷新成功',
-    });
+      sources: latest.LiveConfig || [],
+    }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {
     console.error('直播源刷新失败:', error);
     return NextResponse.json(

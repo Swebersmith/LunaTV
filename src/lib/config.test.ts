@@ -8,7 +8,7 @@ jest.mock('@/lib/db', () => ({
 }));
 
 import { AdminConfig } from './admin.types';
-import { configSelfCheck, getConfig } from './config';
+import { configSelfCheck, getConfig, refineConfig } from './config';
 import { db } from './db';
 
 it('does not write defaults when public requests or cold starts read config', async () => {
@@ -16,6 +16,27 @@ it('does not write defaults when public requests or cold starts read config', as
   expect(first.SiteConfig).toBeDefined();
   expect(second.SiteConfig).toBeDefined();
   expect(db.saveAdminConfig).not.toHaveBeenCalled();
+});
+
+it('reads shared storage again so an older Worker cannot hide an edit or disable', async () => {
+  const previousStorage = process.env.STORAGE_TYPE;
+  process.env.STORAGE_TYPE = 'cloudflare-d1';
+  try {
+    jest.mocked(db.getAdminConfig).mockResolvedValueOnce({ SourceConfig: [{ key: 'vod', disabled: false }] } as AdminConfig).mockResolvedValueOnce({ SourceConfig: [{ key: 'vod', disabled: true, note: '已更新' }] } as AdminConfig);
+    expect((await getConfig()).SourceConfig[0].disabled).toBe(false);
+    expect((await getConfig()).SourceConfig[0]).toMatchObject({ disabled: true, note: '已更新' });
+    expect(db.saveAdminConfig).not.toHaveBeenCalled();
+  } finally {
+    if (previousStorage === undefined) delete process.env.STORAGE_TYPE;
+    else process.env.STORAGE_TYPE = previousStorage;
+  }
+});
+
+it('keeps imported source overrides, notes, and disabled states through subscription refinement', () => {
+  const config = { ConfigFile: JSON.stringify({ api_site: { vod: { name: '订阅名称', api: 'https://subscription.test' } }, lives: { tv: { name: '订阅直播', url: 'https://subscription.test/list' } } }), SourceConfig: [{ key: 'vod', name: '手动名称', api: 'https://manual.test', note: '手动备注', disabled: true, overridden: true, from: 'config' }], LiveConfig: [{ key: 'tv', name: '手动直播', url: 'https://manual.test/list', note: '直播备注', disabled: true, overridden: true, from: 'config' }], CustomCategories: [] } as unknown as AdminConfig;
+  refineConfig(config);
+  expect(config.SourceConfig[0]).toMatchObject({ name: '手动名称', api: 'https://manual.test', note: '手动备注', disabled: true });
+  expect(config.LiveConfig?.[0]).toMatchObject({ name: '手动直播', url: 'https://manual.test/list', note: '直播备注', disabled: true });
 });
 
 describe('user configuration cleanup', () => {

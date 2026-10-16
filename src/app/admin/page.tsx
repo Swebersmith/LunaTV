@@ -38,16 +38,19 @@ import {
   Video,
 } from 'lucide-react';
 import { GripVertical } from 'lucide-react';
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { AdminConfig, AdminConfigResult } from '@/lib/admin.types';
+import { saveSourceChange } from '@/lib/admin-source-client';
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 
 import AdminAccessError from '@/components/AdminAccessError';
 import DataMigration from '@/components/DataMigration';
 import PageLayout from '@/components/PageLayout';
+import SortableSourceRow from '@/components/SortableSourceRow';
 import SourceAddress from '@/components/SourceAddress';
+import SourceEditor, { SourceEditorValue } from '@/components/SourceEditor';
 
 // 统一按钮样式系统
 const buttonStyles = {
@@ -117,9 +120,8 @@ const AlertModal = ({
     if (isOpen) {
       setIsVisible(true);
       if (timer) {
-        setTimeout(() => {
-          onClose();
-        }, timer);
+        const timeout = setTimeout(onClose, timer);
+        return () => clearTimeout(timeout);
       }
     } else {
       setIsVisible(false);
@@ -155,7 +157,7 @@ const AlertModal = ({
   };
 
   return createPortal(
-    <div className={`fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 transition-opacity duration-200 ${isVisible ? 'opacity-100' : 'opacity-0'}`}>
+    <div className={`fixed inset-0 bg-black bg-opacity-50 z-[10020] flex items-center justify-center p-4 transition-opacity duration-200 ${isVisible ? 'opacity-100' : 'opacity-0'}`}>
       <div className={`bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-sm w-full border ${getBgColor()} transition-all duration-200 ${isVisible ? 'scale-100' : 'scale-95'}`}>
         <div className="p-6 text-center">
           <div className="flex justify-center mb-4">
@@ -237,6 +239,7 @@ interface LoadingState {
 
 const useLoadingState = () => {
   const [loadingStates, setLoadingStates] = useState<LoadingState>({});
+  const pendingOperations = useRef(new Map<string, Promise<any>>());
 
   const setLoading = (key: string, loading: boolean) => {
     setLoadingStates(prev => ({ ...prev, [key]: loading }));
@@ -244,14 +247,16 @@ const useLoadingState = () => {
 
   const isLoading = (key: string) => loadingStates[key] || false;
 
-  const withLoading = async (key: string, operation: () => Promise<any>): Promise<any> => {
+  const withLoading = (key: string, operation: () => Promise<any>): Promise<any> => {
+    const pending = pendingOperations.current.get(key);
+    if (pending) return pending;
     setLoading(key, true);
-    try {
-      const result = await operation();
-      return result;
-    } finally {
+    const request = Promise.resolve().then(operation).finally(() => {
+      pendingOperations.current.delete(key);
       setLoading(key, false);
-    }
+    });
+    pendingOperations.current.set(key, request);
+    return request;
   };
 
   return { loadingStates, setLoading, isLoading, withLoading };
@@ -278,6 +283,7 @@ interface DataSource {
   key: string;
   api: string;
   detail?: string;
+  note?: string;
   disabled?: boolean;
   from: 'config' | 'custom';
 }
@@ -289,6 +295,7 @@ interface LiveDataSource {
   url: string;
   ua?: string;
   epg?: string;
+  note?: string;
   channelNumber?: number;
   disabled?: boolean;
   from: 'config' | 'custom';
@@ -2026,23 +2033,19 @@ const UserConfig = ({ config, role, refreshConfig }: UserConfigProps) => {
 const VideoSourceConfig = ({
   config,
   refreshConfig,
+  onSourcesChange,
 }: {
   config: AdminConfig | null;
   refreshConfig: () => Promise<void>;
+  onSourcesChange: (sources: AdminConfig['SourceConfig']) => void;
 }) => {
   const { alertModal, showAlert, hideAlert } = useAlertModal();
   const { isLoading, withLoading } = useLoadingState();
   const [sources, setSources] = useState<DataSource[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [orderChanged, setOrderChanged] = useState(false);
-  const [newSource, setNewSource] = useState<DataSource>({
-    name: '',
-    key: '',
-    api: '',
-    detail: '',
-    disabled: false,
-    from: 'config',
-  });
+  const [editingSource, setEditingSource] = useState<DataSource | null>(null);
+  const [operationMessage, setOperationMessage] = useState('');
 
   // 批量操作相关状态
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set());
@@ -2108,19 +2111,12 @@ const VideoSourceConfig = ({
   // 通用 API 请求
   const callSourceApi = async (body: Record<string, any>) => {
     try {
-      const resp = await fetch('/api/admin/source', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body }),
-      });
-
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        throw new Error(data.error || `操作失败: ${resp.status}`);
-      }
-
-      // 成功后刷新配置
-      await refreshConfig();
+      const result = await saveSourceChange('/api/admin/source', body);
+      if (Array.isArray(result.sources)) {
+        setSources(result.sources);
+        onSourcesChange(result.sources);
+      } else await refreshConfig();
+      if (body.action === 'enable' || body.action === 'disable') setOperationMessage(body.action === 'disable' ? '已禁用视频源' : '已启用视频源');
     } catch (err) {
       showError(err instanceof Error ? err.message : '操作失败', showAlert);
       throw err; // 向上抛出方便调用处判断
@@ -2142,28 +2138,13 @@ const VideoSourceConfig = ({
     });
   };
 
-  const handleAddSource = () => {
-    if (!newSource.name || !newSource.key || !newSource.api) return;
-    withLoading('addSource', async () => {
-      await callSourceApi({
-        action: 'add',
-        key: newSource.key,
-        name: newSource.name,
-        api: newSource.api,
-        detail: newSource.detail,
-      });
-      setNewSource({
-        name: '',
-        key: '',
-        api: '',
-        detail: '',
-        disabled: false,
-        from: 'custom',
-      });
+  const handleSaveSource = (value: SourceEditorValue) => {
+    withLoading('saveVideoSource', async () => {
+      await callSourceApi({ action: editingSource ? 'edit' : 'add', ...value });
+      setEditingSource(null);
       setShowAddForm(false);
-    }).catch(() => {
-      console.error('操作失败', 'add', newSource);
-    });
+      setOperationMessage('视频源已保存');
+    }).catch(() => undefined);
   };
 
   const handleDragEnd = (event: any) => {
@@ -2323,30 +2304,8 @@ const VideoSourceConfig = ({
   };
 
   // 可拖拽行封装 (dnd-kit)
-  const DraggableRow = ({ source }: { source: DataSource }) => {
-    const { attributes, listeners, setNodeRef, transform, transition } =
-      useSortable({ id: source.key });
-
-    const style = {
-      transform: CSS.Transform.toString(transform),
-      transition,
-    } as React.CSSProperties;
-
-    return (
-      <tr
-        ref={setNodeRef}
-        style={style}
-        className='source-list-row hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors select-none'
-      >
-        <td
-          className='px-2 py-4 cursor-grab text-gray-400'
-          data-source-cell='drag'
-          style={{ touchAction: 'none' }}
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical size={16} />
-        </td>
+  const renderSourceRow = (source: DataSource) => (
+      <SortableSourceRow key={source.key} id={source.key}>
         <td className='px-2 py-4 text-center' data-source-cell='select'>
           <input
             type='checkbox'
@@ -2403,7 +2362,11 @@ const VideoSourceConfig = ({
             );
           })()}
         </td>
+        <td className='min-w-[12rem] max-w-[20rem] px-4 py-4 text-sm' data-source-cell='note' data-label='备注'>
+          <p className='source-note whitespace-pre-wrap break-words text-gray-600 dark:text-gray-300'>{source.note || '暂无备注'}</p>
+        </td>
         <td className='px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2' data-source-cell='actions'>
+          <button type='button' disabled={isLoading('saveVideoSource')} onClick={() => { setShowAddForm(false); setEditingSource({ ...source }); }} className={buttonStyles.roundedPrimary}>编辑</button>
           <button
             onClick={() => handleToggleEnable(source.key)}
             disabled={isLoading(`toggleSource_${source.key}`)}
@@ -2412,7 +2375,7 @@ const VideoSourceConfig = ({
               : buttonStyles.roundedSuccess
               } transition-colors ${isLoading(`toggleSource_${source.key}`) ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            {!source.disabled ? '禁用' : '启用'}
+            {isLoading(`toggleSource_${source.key}`) ? '保存中…' : !source.disabled ? '禁用' : '启用'}
           </button>
           {source.from !== 'config' && (
             <button
@@ -2424,9 +2387,8 @@ const VideoSourceConfig = ({
             </button>
           )}
         </td>
-      </tr>
-    );
-  };
+      </SortableSourceRow>
+  );
 
   // 全选/取消全选
   const handleSelectAll = useCallback((checked: boolean) => {
@@ -2567,7 +2529,8 @@ const VideoSourceConfig = ({
               )}
             </button>
             <button
-              onClick={() => setShowAddForm(!showAddForm)}
+              onClick={() => { setEditingSource(null); setShowAddForm(!showAddForm); }}
+              disabled={isLoading('saveVideoSource')}
               className={showAddForm ? buttonStyles.secondary : buttonStyles.success}
             >
               {showAddForm ? '取消' : '添加视频源'}
@@ -2576,69 +2539,8 @@ const VideoSourceConfig = ({
         </div>
       </div>
 
-      {showAddForm && (
-        <div className='p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 space-y-4'>
-          <div className='grid grid-cols-1 sm:grid-cols-2 gap-4'>
-            <input
-              type='text'
-              placeholder='名称'
-              value={newSource.name}
-              onChange={(e) =>
-                setNewSource((prev) => ({ ...prev, name: e.target.value }))
-              }
-              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-            />
-            <input
-              type='text'
-              placeholder='Key'
-              value={newSource.key}
-              onChange={(e) =>
-                setNewSource((prev) => ({ ...prev, key: e.target.value }))
-              }
-              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-            />
-            <input
-              type='text'
-              placeholder='API 地址'
-              aria-label='API 地址'
-              inputMode='url'
-              autoCapitalize='none'
-              autoCorrect='off'
-              spellCheck={false}
-              value={newSource.api}
-              onChange={(e) =>
-                setNewSource((prev) => ({ ...prev, api: e.target.value }))
-              }
-              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-            />
-            <input
-              type='text'
-              placeholder='Detail 地址（选填）'
-              aria-label='Detail 地址（选填）'
-              inputMode='url'
-              autoCapitalize='none'
-              autoCorrect='off'
-              spellCheck={false}
-              value={newSource.detail}
-              onChange={(e) =>
-                setNewSource((prev) => ({ ...prev, detail: e.target.value }))
-              }
-              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-            />
-          </div>
-          <div className='flex justify-end'>
-            <button
-              onClick={handleAddSource}
-              disabled={!newSource.name || !newSource.key || !newSource.api || isLoading('addSource')}
-              className={`w-full sm:w-auto px-4 py-2 ${!newSource.name || !newSource.key || !newSource.api || isLoading('addSource') ? buttonStyles.disabled : buttonStyles.success}`}
-            >
-              {isLoading('addSource') ? '添加中...' : '添加'}
-            </button>
-          </div>
-        </div>
-      )}
-
-
+      {operationMessage && <p role='status' className='text-sm text-green-700 dark:text-green-400'>{operationMessage}</p>}
+      {(showAddForm || editingSource) && <SourceEditor key={editingSource?.key || 'new-video'} kind='video' source={editingSource || undefined} isNew={!editingSource} busy={isLoading('saveVideoSource')} onSave={handleSaveSource} onCancel={() => { setShowAddForm(false); setEditingSource(null); }} />}
 
       {/* 视频源表格 */}
       <div className='border border-gray-200 dark:border-gray-700 rounded-lg max-h-[28rem] overflow-y-auto overflow-x-auto relative' data-table="source-list">
@@ -2673,6 +2575,7 @@ const VideoSourceConfig = ({
               <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                 有效性
               </th>
+              <th className='px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400'>备注</th>
               <th className='px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                 操作
               </th>
@@ -2690,9 +2593,7 @@ const VideoSourceConfig = ({
               strategy={verticalListSortingStrategy}
             >
               <tbody className='divide-y divide-gray-200 dark:divide-gray-700'>
-                {sources.map((source) => (
-                  <DraggableRow key={source.key} source={source} />
-                ))}
+                {sources.map(renderSourceRow)}
               </tbody>
             </SortableContext>
           </DndContext>
@@ -3974,9 +3875,11 @@ const SiteConfigComponent = ({ config, refreshConfig }: { config: AdminConfig | 
 const LiveSourceConfig = ({
   config,
   refreshConfig,
+  onSourcesChange,
 }: {
   config: AdminConfig | null;
   refreshConfig: () => Promise<void>;
+  onSourcesChange: (sources: NonNullable<AdminConfig['LiveConfig']>) => void;
 }) => {
   const { alertModal, showAlert, hideAlert } = useAlertModal();
   const { isLoading, withLoading } = useLoadingState();
@@ -3985,15 +3888,7 @@ const LiveSourceConfig = ({
   const [editingLiveSource, setEditingLiveSource] = useState<LiveDataSource | null>(null);
   const [orderChanged, setOrderChanged] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [newLiveSource, setNewLiveSource] = useState<LiveDataSource>({
-    name: '',
-    key: '',
-    url: '',
-    ua: '',
-    epg: '',
-    disabled: false,
-    from: 'custom',
-  });
+  const [operationMessage, setOperationMessage] = useState('');
 
   // dnd-kit 传感器
   const sensors = useSensors(
@@ -4022,19 +3917,13 @@ const LiveSourceConfig = ({
   // 通用 API 请求
   const callLiveSourceApi = async (body: Record<string, any>) => {
     try {
-      const resp = await fetch('/api/admin/live', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body }),
-      });
-
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        throw new Error(data.error || `操作失败: ${resp.status}`);
-      }
-
-      // 成功后刷新配置
-      await refreshConfig();
+      const result = await saveSourceChange('/api/admin/live', body);
+      if (Array.isArray(result.sources)) {
+        setLiveSources(result.sources);
+        onSourcesChange(result.sources);
+      } else await refreshConfig();
+      if (body.action === 'enable' || body.action === 'disable') setOperationMessage(body.action === 'disable' ? '已禁用直播源' : '已启用直播源');
+      return result;
     } catch (err) {
       showError(err instanceof Error ? err.message : '操作失败', showAlert);
       throw err; // 向上抛出方便调用处判断
@@ -4085,51 +3974,13 @@ const LiveSourceConfig = ({
     });
   };
 
-  const handleAddLiveSource = () => {
-    if (!newLiveSource.name || !newLiveSource.key || !newLiveSource.url) return;
-    withLoading('addLiveSource', async () => {
-      await callLiveSourceApi({
-        action: 'add',
-        key: newLiveSource.key,
-        name: newLiveSource.name,
-        url: newLiveSource.url,
-        ua: newLiveSource.ua,
-        epg: newLiveSource.epg,
-      });
-      setNewLiveSource({
-        name: '',
-        key: '',
-        url: '',
-        epg: '',
-        ua: '',
-        disabled: false,
-        from: 'custom',
-      });
-      setShowAddForm(false);
-    }).catch(() => {
-      console.error('操作失败', 'add', newLiveSource);
-    });
-  };
-
-  const handleEditLiveSource = () => {
-    if (!editingLiveSource || !editingLiveSource.name || !editingLiveSource.url) return;
-    withLoading('editLiveSource', async () => {
-      await callLiveSourceApi({
-        action: 'edit',
-        key: editingLiveSource.key,
-        name: editingLiveSource.name,
-        url: editingLiveSource.url,
-        ua: editingLiveSource.ua,
-        epg: editingLiveSource.epg,
-      });
+  const handleSaveLiveSource = (value: SourceEditorValue) => {
+    withLoading('saveLiveSource', async () => {
+      const result = await callLiveSourceApi({ action: editingLiveSource ? 'edit' : 'add', ...value });
       setEditingLiveSource(null);
-    }).catch(() => {
-      console.error('操作失败', 'edit', editingLiveSource);
-    });
-  };
-
-  const handleCancelEdit = () => {
-    setEditingLiveSource(null);
+      setShowAddForm(false);
+      setOperationMessage(result.needsRefresh ? '已保存，频道将在打开直播或刷新直播源时更新' : '直播源已保存');
+    }).catch(() => undefined);
   };
 
   const handleDragEnd = (event: any) => {
@@ -4153,57 +4004,35 @@ const LiveSourceConfig = ({
   };
 
   // 可拖拽行封装 (dnd-kit)
-  const DraggableRow = ({ liveSource }: { liveSource: LiveDataSource }) => {
-    const { attributes, listeners, setNodeRef, transform, transition } =
-      useSortable({ id: liveSource.key });
-
-    const style = {
-      transform: CSS.Transform.toString(transform),
-      transition,
-    } as React.CSSProperties;
-
-    return (
-      <tr
-        ref={setNodeRef}
-        style={style}
-        className='hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors select-none'
-      >
-        <td
-          className='px-2 py-4 cursor-grab text-gray-400'
-          style={{ touchAction: 'none' }}
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical size={16} />
-        </td>
-        <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
+  const renderLiveRow = (liveSource: LiveDataSource) => (
+      <SortableSourceRow key={liveSource.key} id={liveSource.key}>
+        <td data-source-cell='name' className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
           {liveSource.name}
         </td>
-        <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
+        <td data-source-cell='key' data-label='Key' className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
           {liveSource.key}
         </td>
         <td
-          className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 max-w-[12rem] truncate'
-          title={liveSource.url}
+          className='min-w-[16rem] max-w-[24rem] px-4 py-4 text-sm' data-source-cell='api' data-label='M3U 地址'
         >
-          {liveSource.url}
+          <SourceAddress value={liveSource.url} label={`${liveSource.name} M3U 地址`} />
+        </td>
+        <td
+          className='min-w-[12rem] max-w-[20rem] px-4 py-4 text-sm' data-source-cell='detail' data-label='节目单地址'
+        >
+          <SourceAddress value={liveSource.epg} label={`${liveSource.name} 节目单地址`} />
         </td>
         <td
           className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 max-w-[8rem] truncate'
-          title={liveSource.epg || '-'}
-        >
-          {liveSource.epg || '-'}
-        </td>
-        <td
-          className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 max-w-[8rem] truncate'
+          data-source-cell='ua' data-label='User-Agent'
           title={liveSource.ua || '-'}
         >
           {liveSource.ua || '-'}
         </td>
-        <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 text-center'>
+        <td data-source-cell='channels' data-label='频道数' className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 text-center'>
           {liveSource.channelNumber && liveSource.channelNumber > 0 ? liveSource.channelNumber : '-'}
         </td>
-        <td className='px-6 py-4 whitespace-nowrap max-w-[1rem]'>
+        <td data-source-cell='status' className='px-6 py-4 whitespace-nowrap max-w-[1rem]'>
           <span
             className={`px-2 py-1 text-xs rounded-full ${!liveSource.disabled
               ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300'
@@ -4213,7 +4042,11 @@ const LiveSourceConfig = ({
             {!liveSource.disabled ? '启用中' : '已禁用'}
           </span>
         </td>
-        <td className='px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2'>
+        <td data-source-cell='note' data-label='备注' className='min-w-[12rem] max-w-[20rem] px-4 py-4 text-sm'>
+          <p className='source-note whitespace-pre-wrap break-words text-gray-600 dark:text-gray-300'>{liveSource.note || '暂无备注'}</p>
+        </td>
+        <td data-source-cell='actions' className='px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2'>
+          <button type='button' disabled={isLoading('saveLiveSource')} onClick={() => { setShowAddForm(false); setEditingLiveSource({ ...liveSource }); }} className={buttonStyles.roundedPrimary}>编辑</button>
           <button
             onClick={() => handleToggleEnable(liveSource.key)}
             disabled={isLoading(`toggleLiveSource_${liveSource.key}`)}
@@ -4222,17 +4055,10 @@ const LiveSourceConfig = ({
               : buttonStyles.roundedSuccess
               } transition-colors ${isLoading(`toggleLiveSource_${liveSource.key}`) ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            {!liveSource.disabled ? '禁用' : '启用'}
+            {isLoading(`toggleLiveSource_${liveSource.key}`) ? '保存中…' : !liveSource.disabled ? '禁用' : '启用'}
           </button>
           {liveSource.from !== 'config' && (
             <>
-              <button
-                onClick={() => setEditingLiveSource(liveSource)}
-                disabled={isLoading(`editLiveSource_${liveSource.key}`)}
-                className={`${buttonStyles.roundedPrimary} ${isLoading(`editLiveSource_${liveSource.key}`) ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                编辑
-              </button>
               <button
                 onClick={() => handleDelete(liveSource.key)}
                 disabled={isLoading(`deleteLiveSource_${liveSource.key}`)}
@@ -4243,9 +4069,8 @@ const LiveSourceConfig = ({
             </>
           )}
         </td>
-      </tr>
-    );
-  };
+      </SortableSourceRow>
+  );
 
   if (!config) {
     return (
@@ -4258,11 +4083,11 @@ const LiveSourceConfig = ({
   return (
     <div className='space-y-6'>
       {/* 添加直播源表单 */}
-      <div className='flex items-center justify-between'>
+      <div className='flex flex-wrap items-center justify-between gap-3'>
         <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
           直播源列表
         </h4>
-        <div className='flex items-center space-x-2'>
+        <div className='flex flex-wrap items-center gap-2'>
           <button
             onClick={handleRefreshLiveSources}
             disabled={isRefreshing || isLoading('refreshLiveSources')}
@@ -4274,7 +4099,8 @@ const LiveSourceConfig = ({
             <span>{isRefreshing || isLoading('refreshLiveSources') ? '刷新中...' : '刷新直播源'}</span>
           </button>
           <button
-            onClick={() => setShowAddForm(!showAddForm)}
+            onClick={() => { setEditingLiveSource(null); setShowAddForm(!showAddForm); }}
+            disabled={isLoading('saveLiveSource')}
             className={showAddForm ? buttonStyles.secondary : buttonStyles.success}
           >
             {showAddForm ? '取消' : '添加直播源'}
@@ -4282,168 +4108,12 @@ const LiveSourceConfig = ({
         </div>
       </div>
 
-      {showAddForm && (
-        <div className='p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 space-y-4'>
-          <div className='grid grid-cols-1 sm:grid-cols-2 gap-4'>
-            <input
-              type='text'
-              placeholder='名称'
-              value={newLiveSource.name}
-              onChange={(e) =>
-                setNewLiveSource((prev) => ({ ...prev, name: e.target.value }))
-              }
-              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-            />
-            <input
-              type='text'
-              placeholder='Key'
-              value={newLiveSource.key}
-              onChange={(e) =>
-                setNewLiveSource((prev) => ({ ...prev, key: e.target.value }))
-              }
-              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-            />
-            <input
-              type='text'
-              placeholder='M3U 地址'
-              value={newLiveSource.url}
-              onChange={(e) =>
-                setNewLiveSource((prev) => ({ ...prev, url: e.target.value }))
-              }
-              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-            />
-            <input
-              type='text'
-              placeholder='节目单地址（选填）'
-              value={newLiveSource.epg}
-              onChange={(e) =>
-                setNewLiveSource((prev) => ({ ...prev, epg: e.target.value }))
-              }
-              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-            />
-            <input
-              type='text'
-              placeholder='自定义 UA（选填）'
-              value={newLiveSource.ua}
-              onChange={(e) =>
-                setNewLiveSource((prev) => ({ ...prev, ua: e.target.value }))
-              }
-              className='px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-            />
-
-          </div>
-          <div className='flex justify-end'>
-            <button
-              onClick={handleAddLiveSource}
-              disabled={!newLiveSource.name || !newLiveSource.key || !newLiveSource.url || isLoading('addLiveSource')}
-              className={`w-full sm:w-auto px-4 py-2 ${!newLiveSource.name || !newLiveSource.key || !newLiveSource.url || isLoading('addLiveSource') ? buttonStyles.disabled : buttonStyles.success}`}
-            >
-              {isLoading('addLiveSource') ? '添加中...' : '添加'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 编辑直播源表单 */}
-      {editingLiveSource && (
-        <div className='p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 space-y-4'>
-          <div className='flex items-center justify-between'>
-            <h5 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
-              编辑直播源: {editingLiveSource.name}
-            </h5>
-            <button
-              onClick={handleCancelEdit}
-              className='text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-            >
-              ✕
-            </button>
-          </div>
-          <div className='grid grid-cols-1 sm:grid-cols-2 gap-4'>
-            <div>
-              <label className='block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1'>
-                名称
-              </label>
-              <input
-                type='text'
-                value={editingLiveSource.name}
-                onChange={(e) =>
-                  setEditingLiveSource((prev) => prev ? ({ ...prev, name: e.target.value }) : null)
-                }
-                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-              />
-            </div>
-            <div>
-              <label className='block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1'>
-                Key (不可编辑)
-              </label>
-              <input
-                type='text'
-                value={editingLiveSource.key}
-                disabled
-                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-              />
-            </div>
-            <div>
-              <label className='block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1'>
-                M3U 地址
-              </label>
-              <input
-                type='text'
-                value={editingLiveSource.url}
-                onChange={(e) =>
-                  setEditingLiveSource((prev) => prev ? ({ ...prev, url: e.target.value }) : null)
-                }
-                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-              />
-            </div>
-            <div>
-              <label className='block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1'>
-                节目单地址（选填）
-              </label>
-              <input
-                type='text'
-                value={editingLiveSource.epg}
-                onChange={(e) =>
-                  setEditingLiveSource((prev) => prev ? ({ ...prev, epg: e.target.value }) : null)
-                }
-                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-              />
-            </div>
-            <div>
-              <label className='block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1'>
-                自定义 UA（选填）
-              </label>
-              <input
-                type='text'
-                value={editingLiveSource.ua}
-                onChange={(e) =>
-                  setEditingLiveSource((prev) => prev ? ({ ...prev, ua: e.target.value }) : null)
-                }
-                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-              />
-            </div>
-          </div>
-          <div className='flex justify-end space-x-2'>
-            <button
-              onClick={handleCancelEdit}
-              className={buttonStyles.secondary}
-            >
-              取消
-            </button>
-            <button
-              onClick={handleEditLiveSource}
-              disabled={!editingLiveSource.name || !editingLiveSource.url || isLoading('editLiveSource')}
-              className={`${!editingLiveSource.name || !editingLiveSource.url || isLoading('editLiveSource') ? buttonStyles.disabled : buttonStyles.success}`}
-            >
-              {isLoading('editLiveSource') ? '保存中...' : '保存'}
-            </button>
-          </div>
-        </div>
-      )}
+      {operationMessage && <p role='status' className='text-sm text-green-700 dark:text-green-400'>{operationMessage}</p>}
+      {(showAddForm || editingLiveSource) && <SourceEditor key={editingLiveSource?.key || 'new-live'} kind='live' source={editingLiveSource || undefined} isNew={!editingLiveSource} busy={isLoading('saveLiveSource')} onSave={handleSaveLiveSource} onCancel={() => { setShowAddForm(false); setEditingLiveSource(null); }} />}
 
       {/* 直播源表格 */}
       <div className='border border-gray-200 dark:border-gray-700 rounded-lg max-h-[28rem] overflow-y-auto overflow-x-auto relative' data-table="live-source-list">
-        <table className='min-w-full divide-y divide-gray-200 dark:divide-gray-700'>
+        <table className='source-list-table source-list-table--live min-w-full divide-y divide-gray-200 dark:divide-gray-700'>
           <thead className='bg-gray-50 dark:bg-gray-900 sticky top-0 z-10'>
             <tr>
               <th className='w-8' />
@@ -4468,6 +4138,7 @@ const LiveSourceConfig = ({
               <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                 状态
               </th>
+              <th className='px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400'>备注</th>
               <th className='px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                 操作
               </th>
@@ -4485,9 +4156,7 @@ const LiveSourceConfig = ({
               strategy={verticalListSortingStrategy}
             >
               <tbody className='divide-y divide-gray-200 dark:divide-gray-700'>
-                {liveSources.map((liveSource) => (
-                  <DraggableRow key={liveSource.key} liveSource={liveSource} />
-                ))}
+                {liveSources.map(renderLiveRow)}
               </tbody>
             </SortableContext>
           </DndContext>
@@ -4549,7 +4218,7 @@ function AdminPageClient() {
         setLoading(true);
       }
 
-      const response = await fetch(`/api/admin/config`);
+      const response = await fetch(`/api/admin/config`, { cache: 'no-store' });
 
       if (!response.ok) {
         const data = (await response.json()) as any;
@@ -4708,7 +4377,7 @@ function AdminPageClient() {
               isExpanded={expandedTabs.videoSource}
               onToggle={() => toggleTab('videoSource')}
             >
-              <VideoSourceConfig config={config} refreshConfig={fetchConfig} />
+              <VideoSourceConfig config={config} refreshConfig={fetchConfig} onSourcesChange={sources => setConfig(previous => previous ? { ...previous, SourceConfig: sources } : previous)} />
             </CollapsibleTab>
 
             {/* 直播源配置标签 */}
@@ -4720,7 +4389,7 @@ function AdminPageClient() {
               isExpanded={expandedTabs.liveSource}
               onToggle={() => toggleTab('liveSource')}
             >
-              <LiveSourceConfig config={config} refreshConfig={fetchConfig} />
+              <LiveSourceConfig config={config} refreshConfig={fetchConfig} onSourcesChange={sources => setConfig(previous => previous ? { ...previous, LiveConfig: sources } : previous)} />
             </CollapsibleTab>
 
             {/* 分类配置标签 */}
