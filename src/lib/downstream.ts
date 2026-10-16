@@ -27,14 +27,14 @@ async function searchWithCache(
   page: number,
   url: string,
   timeoutMs = 8000
-): Promise<{ results: SearchResult[]; pageCount?: number }> {
+): Promise<{ results: SearchResult[]; pageCount?: number; failed?: boolean }> {
   // 先查缓存
   const cached = getCachedSearchPage(apiSite.key, query, page);
   if (cached) {
     if (cached.status === 'ok') {
       return { results: cached.data, pageCount: cached.pageCount };
     } else {
-      return { results: [] };
+      return { results: [], failed: true };
     }
   }
 
@@ -48,13 +48,11 @@ async function searchWithCache(
       signal: controller.signal,
     });
 
-    clearTimeout(timeoutId);
-
     if (!response.ok) {
       if (response.status === 403) {
         setCachedSearchPage(apiSite.key, query, page, 'forbidden', []);
       }
-      return { results: [] };
+      return { results: [], failed: true };
     }
 
     const data = await response.json();
@@ -65,7 +63,7 @@ async function searchWithCache(
       data.list.length === 0
     ) {
       // 空结果不做负缓存要求，这里不写入缓存
-      return { results: [] };
+      return { results: [], ...(Array.isArray(data?.list) ? { pageCount: Number(data.pagecount) || 1 } : { failed: true }) };
     }
 
     // 处理结果数据
@@ -125,14 +123,23 @@ async function searchWithCache(
     setCachedSearchPage(apiSite.key, query, page, 'ok', results, pageCount);
     return { results, pageCount };
   } catch (error: any) {
-    clearTimeout(timeoutId);
     // 识别被 AbortController 中止（超时）
     const aborted = error?.name === 'AbortError' || error?.code === 20 || error?.message?.includes('aborted');
     if (aborted) {
       setCachedSearchPage(apiSite.key, query, page, 'timeout', []);
     }
-    return { results: [] };
+    return { results: [], failed: true };
+  } finally {
+    clearTimeout(timeoutId);
   }
+}
+
+// The collection follows each provider's pagination without changing general search limits.
+export async function searchPageFromApi(apiSite: ApiSite, query: string, page: number) {
+  const url = page === 1
+    ? apiSite.api + API_CONFIG.search.path + encodeURIComponent(query)
+    : apiSite.api + API_CONFIG.search.pagePath.replace('{query}', encodeURIComponent(query)).replace('{page}', String(page));
+  return searchWithCache(apiSite, query, page, url);
 }
 
 export async function searchFromApi(

@@ -17,14 +17,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   buildShinchanCollection,
+  findShinchanMovie,
   getShinchanMovie,
   isShinchanVideo,
+  mergeShinchanMovies,
   normalizeShinchanTitle,
   SHINCHAN_MOVIES,
   ShinchanMovie,
   shinchanPlaybackUrl,
 } from '@/lib/shinchan-catalog';
+import { discoverShinchanVideos } from '@/lib/shinchan-client';
+import type { ShinchanCatalogSnapshot } from '@/lib/shinchan-metadata';
 import type { SearchResult } from '@/lib/types';
+import { useShinchanAutoRefresh } from '@/hooks/useShinchanAutoRefresh';
 
 import CapsuleSwitch from './CapsuleSwitch';
 import { SquadColors, SquadIllustration } from './CrayonTheme';
@@ -92,7 +97,11 @@ export default function ShinchanCollection() {
   const [records, setRecords] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [revision, setRevision] = useState(0);
+  const { revision, refresh } = useShinchanAutoRefresh();
+  const [catalog, setCatalog] = useState(SHINCHAN_MOVIES);
+  const [catalogStatus, setCatalogStatus] = useState('');
+  const [checkedAt, setCheckedAt] = useState('');
+  const [partialSources, setPartialSources] = useState(false);
   const [query, setQuery] = useState('');
   const [availableOnly, setAvailableOnly] = useState(false);
   const [newestFirst, setNewestFirst] = useState(false);
@@ -100,7 +109,10 @@ export default function ShinchanCollection() {
   const [resolving, setResolving] = useState(false);
   const [resolveError, setResolveError] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
-  const collection = useMemo(() => buildShinchanCollection(records), [records]);
+  const collection = useMemo(
+    () => buildShinchanCollection(records, catalog),
+    [records, catalog]
+  );
   const collectionRef = useRef(collection);
   collectionRef.current = collection;
 
@@ -108,14 +120,47 @@ export default function ShinchanCollection() {
     const controller = new AbortController();
     setLoading(true);
     setLoadError('');
-    setRecords([]);
     (async () => {
       try {
-        let results = await searchVideos('蜡笔小新', controller.signal);
-        if (!results.length)
-          results = await searchVideos('蠟筆小新', controller.signal);
-        if (!controller.signal.aborted)
-          setRecords((previous) => [...previous, ...results]);
+        const [metadata, discovered] = await Promise.allSettled([
+          (async () => {
+            const response = await fetch('/api/shinchan/catalog', {
+              signal: controller.signal,
+              cache: 'no-store',
+            });
+            if (!response.ok) throw new Error('目录同步暂不可用');
+            const data = (await response.json()) as ShinchanCatalogSnapshot;
+            if (!Array.isArray(data.movies)) throw new Error('目录格式异常');
+            return data;
+          })(),
+          discoverShinchanVideos(controller.signal).then((data) => {
+            if (!controller.signal.aborted) setRecords(data.results);
+            return data;
+          }),
+        ]);
+        if (controller.signal.aborted) return;
+        const movies =
+          metadata.status === 'fulfilled'
+            ? mergeShinchanMovies(
+                collectionRef.current.movieCatalog,
+                metadata.value.movies
+              )
+            : collectionRef.current.movieCatalog;
+        setCatalogStatus(
+          metadata.status === 'fulfilled' && metadata.value.status === 'current'
+            ? ''
+            : '部分目录服务暂不可用，已保留已有清单，稍后自动重试。'
+        );
+        setCatalog(movies);
+        if (discovered.status === 'rejected') throw discovered.reason;
+        const results = discovered.value.results;
+        setPartialSources(discovered.value.partial);
+        const next = buildShinchanCollection(results, movies);
+        setCatalog(next.movieCatalog);
+        if (!controller.signal.aborted) {
+          setRecords(results);
+          setCheckedAt(new Date().toISOString());
+        }
       } catch (error) {
         if (!controller.signal.aborted)
           setLoadError(error instanceof Error ? error.message : '片源加载失败');
@@ -137,7 +182,14 @@ export default function ShinchanCollection() {
     setResolving(false);
     if (
       !selected?.movie ||
-      collectionRef.current.movies.get(selected.movie.year)?.length
+      collectionRef.current.movies.get(
+        (
+          findShinchanMovie(
+            selected.movie.title,
+            collectionRef.current.movieCatalog
+          ) ?? selected.movie
+        ).id
+      )?.length
     )
       return;
     if (loading) {
@@ -155,7 +207,15 @@ export default function ShinchanCollection() {
         )) {
           if (!term) continue;
           const found = (await searchVideos(term, controller.signal)).filter(
-            (result) => getShinchanMovie(result)?.year === movie.year
+            (result) =>
+              getShinchanMovie(result, collectionRef.current.movieCatalog)
+                ?.id ===
+              (
+                findShinchanMovie(
+                  movie.title,
+                  collectionRef.current.movieCatalog
+                ) ?? movie
+              ).id
           );
           if (found.length && !controller.signal.aborted) {
             setRecords((previous) => [...previous, ...found]);
@@ -183,18 +243,27 @@ export default function ShinchanCollection() {
         normalizeShinchanTitle(result.title).includes(term)
       )
   );
-  const movies = SHINCHAN_MOVIES.filter(
+  const movies = collection.movieCatalog.filter(
     (movie) =>
       (!term ||
         [String(movie.year), movie.title, ...movie.aliases].some((title) =>
           normalizeShinchanTitle(title).includes(term)
         )) &&
-      (!availableOnly || collection.movies.has(movie.year))
+      (!availableOnly || collection.movies.has(movie.id))
   );
   if (newestFirst) movies.reverse();
   const selectedResults = selected?.movie
-    ? collection.movies.get(selected.movie.year) ?? []
-    : selected?.results ?? [];
+    ? collection.movies.get(
+        (
+          findShinchanMovie(selected.movie.title, collection.movieCatalog) ??
+          selected.movie
+        ).id
+      ) ?? []
+    : collection.series.find((group) => group.key === selected?.key)?.results ??
+      (selected?.key === 'movie-bundles'
+        ? collection.bundles
+        : selected?.results) ??
+      [];
   const resultKeys = new Set<string>();
   const sources = selectedResults.filter((result) => {
     const key = `${result.source}\0${result.id}`;
@@ -229,7 +298,7 @@ export default function ShinchanCollection() {
                     } 季电视动画`}
               </span>
               <span>
-                <Film size={15} /> {SHINCHAN_MOVIES.length} 部剧场版目录
+                <Film size={15} /> {collection.movieCatalog.length} 部电影目录
               </span>
             </div>
           </div>
@@ -237,6 +306,27 @@ export default function ShinchanCollection() {
             <SquadIllustration />
           </div>
         </section>
+
+        <p className='shinchan-catalog-note' role='status'>
+          {loading
+            ? '正在自动整理最新目录与片源…'
+            : `已开启自动整理${
+                checkedAt
+                  ? ` · 最近检查 ${new Date(checkedAt).toLocaleTimeString(
+                      'zh-CN',
+                      { hour: '2-digit', minute: '2-digit' }
+                    )}`
+                  : ''
+              } · 新季、新电影及新增集数会自动跟进。`}
+        </p>
+        {(catalogStatus || partialSources) && (
+          <p className='shinchan-notice'>
+            {catalogStatus}
+            {partialSources
+              ? ' 部分片源暂不可用，已显示成功检索的版本，稍后自动重试。'
+              : ''}
+          </p>
+        )}
 
         <div className='shinchan-toolbar'>
           <CapsuleSwitch
@@ -262,7 +352,7 @@ export default function ShinchanCollection() {
             </label>
             <button
               className='shinchan-refresh'
-              onClick={() => setRevision((value) => value + 1)}
+              onClick={refresh}
               disabled={loading}
               aria-label='刷新小新片源'
             >
@@ -273,10 +363,7 @@ export default function ShinchanCollection() {
 
         {loadError && (
           <div className='shinchan-notice' role='alert'>
-            {loadError}{' '}
-            <button onClick={() => setRevision((value) => value + 1)}>
-              重新加载
-            </button>
+            {loadError} <button onClick={refresh}>重新加载</button>
           </div>
         )}
         {!loadError && loading && (
@@ -380,8 +467,9 @@ export default function ShinchanCollection() {
               </div>
             </div>
             <p className='shinchan-catalog-note'>
-              目录按日本首映年份排列，包含 3DCG
-              剧场版。未匹配的影片可点开继续查找，片源会上新。
+              目录根据官方上映记录和动态条目资料自动整理，按日本首映年份排列，包含
+              3DCG
+              剧场版，天象电影等会标注“特别放映”。已发布和已找到播放源分别显示。
             </p>
             {collection.bundles.length > 0 && (
               <button
@@ -403,14 +491,14 @@ export default function ShinchanCollection() {
             )}
             <div className='shinchan-movie-grid'>
               {movies.map((movie) => {
-                const versions = collection.movies.get(movie.year) ?? [];
+                const versions = collection.movies.get(movie.id) ?? [];
                 return (
                   <button
                     className='shinchan-movie-card'
-                    key={movie.year}
+                    key={movie.id}
                     onClick={() =>
                       setSelected({
-                        key: `movie-${movie.year}`,
+                        key: movie.id,
                         title: `蜡笔小新：${movie.title}`,
                         results: [],
                         movie,
@@ -423,11 +511,22 @@ export default function ShinchanCollection() {
                     />
                     <h3>{movie.title}</h3>
                     <p className={versions.length ? 'shinchan-found' : ''}>
+                      {movie.edition === 'special-screening'
+                        ? '特别放映 · '
+                        : ''}
                       {versions.length
                         ? `${versions.length} 个版本 · 选择播放`
                         : loading
                         ? '正在匹配片源'
-                        : '查找片源'}
+                        : movie.releaseDate &&
+                          movie.releaseDate >
+                            new Date()
+                              .toISOString()
+                              .slice(0, movie.releaseDate.length)
+                        ? '尚未上映 · 自动跟进'
+                        : movie.releaseDate
+                        ? '已发布 · 等待片源'
+                        : '等待片源 · 自动跟进'}
                     </p>
                   </button>
                 );
@@ -518,7 +617,7 @@ export default function ShinchanCollection() {
             <div className='shinchan-no-source'>
               <Film size={30} />
               <p>当前片源暂未找到这部作品。</p>
-              <p>可以稍后刷新，或使用其他译名继续搜索。</p>
+              <p>专区会自动跟进片源上新，无需手动维护清单。</p>
               <Link
                 href={`/search?q=${encodeURIComponent(
                   selected?.movie

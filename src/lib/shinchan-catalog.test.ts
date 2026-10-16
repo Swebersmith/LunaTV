@@ -3,6 +3,7 @@ import {
   getShinchanMovie,
   getShinchanSeason,
   isShinchanVideo,
+  mergeShinchanMovies,
   normalizeShinchanTitle,
   SHINCHAN_MOVIES,
   shinchanPlaybackUrl,
@@ -91,7 +92,59 @@ it('keeps movie bundles and extra stories separate and retains alternative sourc
   expect(collection.bundles).toHaveLength(1);
   expect(collection.extras).toHaveLength(1);
   expect(collection.series).toHaveLength(0);
-  expect(collection.movies.get(2024)).toHaveLength(2);
+  expect(collection.movies.get('legacy-2024')).toHaveLength(2);
+});
+
+it('automatically includes new source movies and seasons beyond the fallback list', () => {
+  const future = {
+    ...video('蜡笔小新剧场版：未来星空大冒险'),
+    year: '2028',
+    type_name: '动漫电影',
+  };
+  const collection = buildShinchanCollection([
+    future,
+    video('蜡笔小新第12季', 52),
+    video('蠟筆小新第十二季（日語）', 53, 'two'),
+  ]);
+  const movie = collection.movieCatalog.find((movie) =>
+    movie.title.includes('未来星空')
+  );
+  expect(movie?.year).toBe(2028);
+  expect(collection.movies.get(movie?.id || '')).toEqual([future]);
+  expect(collection.series[0].season).toBe(12);
+  expect(collection.series[0].results).toHaveLength(2);
+});
+
+it('keeps multiple movies in the same year separate and updates postponed releases', () => {
+  const first = {
+    id: 'a',
+    year: 2028,
+    title: '未来星空大冒险',
+    aliases: [],
+    releaseDate: '2028-07-01',
+    origin: 'bangumi' as const,
+  };
+  const second = {
+    id: 'b',
+    year: 2028,
+    title: '神秘春日部大作战',
+    aliases: [],
+  };
+  const catalog = mergeShinchanMovies(
+    [first, second],
+    [{ ...first, year: 2029, releaseDate: '2029-08-20' }]
+  );
+  expect(catalog).toHaveLength(2);
+  expect(catalog.find((movie) => movie.id === 'a')?.releaseDate).toBe(
+    '2029-08-20'
+  );
+  expect(catalog.find((movie) => movie.id === 'a')?.year).toBe(2029);
+  const collection = buildShinchanCollection(
+    [video('蜡笔小新：未来星空大冒险'), video('蜡笔小新：神秘春日部大作战')],
+    catalog
+  );
+  expect(collection.movies.get('a')).toHaveLength(1);
+  expect(collection.movies.get('b')).toHaveLength(1);
 });
 
 it('links the exact provider result to the player and returns to the collection', () => {

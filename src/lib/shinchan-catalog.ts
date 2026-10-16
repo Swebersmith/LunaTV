@@ -1,14 +1,19 @@
 import type { SearchResult } from './types';
 
 export interface ShinchanMovie {
+  id: string;
   year: number;
   title: string;
   aliases: string[];
+  releaseDate?: string;
+  officialReleaseDate?: string;
+  origin?: 'official' | 'bangumi' | 'source';
+  edition?: 'special-screening';
 }
 
 // Release years checked against https://www.shinchan-app.jp/about/index.php.
 // Localized titles are aliases, not separate movies. 2023 includes the 3DCG film.
-export const SHINCHAN_MOVIES: ShinchanMovie[] = [
+const FALLBACK_MOVIES: Omit<ShinchanMovie, 'id'>[] = [
   {
     year: 1993,
     title: '动感超人大战泳装魔王',
@@ -213,6 +218,14 @@ export const SHINCHAN_MOVIES: ShinchanMovie[] = [
   },
 ];
 
+// An offline fallback, never an upper limit on the live directory.
+export const SHINCHAN_MOVIES: ShinchanMovie[] = FALLBACK_MOVIES.map(
+  (movie) => ({
+    ...movie,
+    id: `legacy-${movie.year}`,
+  })
+);
+
 const traditional =
   '蠟筆劇場電視國語話臺灣風雲傳說戰鬥擊動決勝襲來夢異樂園時黃間諜壯學謎團機親愛華麗熱們龍記級寶藏祕溫發與過衛隊頭藍這遺廣歸';
 const simplified =
@@ -233,19 +246,129 @@ export function isShinchanVideo(result: SearchResult): boolean {
   return (
     /蜡笔小新|クレヨンしんちゃん|crayonshinchan/.test(title) &&
     !/解说|解說|预告|預告|trailer|讲解|reaction/.test(title) &&
+    Array.isArray(result.episodes) &&
     result.episodes.length > 0
   );
 }
 
 export function getShinchanMovie(
-  result: SearchResult
+  result: SearchResult,
+  catalog: ShinchanMovie[] = SHINCHAN_MOVIES
 ): ShinchanMovie | undefined {
   if (!isShinchanVideo(result)) return undefined;
-  const title = normalizeShinchanTitle(result.title);
-  return SHINCHAN_MOVIES.find((movie) =>
-    [movie.title, ...movie.aliases].some((alias) =>
-      title.includes(normalizeShinchanTitle(alias))
+  return findShinchanMovie(result.title, catalog);
+}
+
+export function movieTitle(title: string): string {
+  return title
+    .replace(
+      /^(?:(?:电影|電影|映画|劇場版|剧场版)\s*)?(?:蜡笔小新|蠟筆小新|クレヨンしんちゃん|crayon\s*shinchan)\s*(?:the\s*movie)?[\s：:·-]*/i,
+      ''
     )
+    .replace(/^(?:剧场版|劇場版|电影版|電影版)[\s：:·-]*/, '')
+    .replace(
+      /(?:[（([]?(?:国语|國語|日语|日語|粤语|粵語|普通话|中文版|日语版|国日双语|高清|超清|蓝光|HD|BD|1080p|2160p)[）)\]]?)+$/gi,
+      ''
+    )
+    .trim();
+}
+
+function aliases(movie: ShinchanMovie): string[] {
+  return Array.from(
+    new Set(
+      [movie.title, ...movie.aliases]
+        .map(movieTitle)
+        .map(normalizeShinchanTitle)
+        .filter((name) => name.length >= 4)
+    )
+  );
+}
+
+export function findShinchanMovie(
+  title: string,
+  catalog: ShinchanMovie[]
+): ShinchanMovie | undefined {
+  const normalized = normalizeShinchanTitle(movieTitle(title));
+  // Prefer the most specific alias, never a release year alone.
+  return catalog
+    .map((movie) => ({
+      movie,
+      score: Math.max(
+        0,
+        ...aliases(movie)
+          .filter((name) => normalized.includes(name))
+          .map((name) => name.length)
+      ),
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.movie;
+}
+
+export function mergeShinchanMovies(
+  ...lists: ShinchanMovie[][]
+): ShinchanMovie[] {
+  const merged: ShinchanMovie[] = [];
+  const indexedNames = new Map<string, string[]>();
+  for (const incoming of lists.flat()) {
+    const names = aliases(incoming);
+    const existing = merged.find(
+      (movie) =>
+        movie.id === incoming.id ||
+        (indexedNames.get(movie.id) || []).some(
+          (name) =>
+            names.includes(name) ||
+            (movie.year === incoming.year &&
+              names.some(
+                (other) => name.includes(other) || other.includes(name)
+              ))
+        )
+    );
+    if (!existing) {
+      merged.push({ ...incoming, aliases: [...incoming.aliases] });
+      indexedNames.set(incoming.id, names);
+      continue;
+    }
+    indexedNames.set(
+      existing.id,
+      Array.from(new Set([...(indexedNames.get(existing.id) || []), ...names]))
+    );
+    existing.aliases = Array.from(
+      new Set([...existing.aliases, incoming.title, ...incoming.aliases])
+    );
+    if (incoming.edition) existing.edition = incoming.edition;
+    // Japanese official titles also contain kanji: prefer any Chinese localized title
+    // when replacing an entry whose display title contains kana.
+    if (
+      incoming.origin === 'bangumi' &&
+      /[\u3040-\u30ff]/.test(existing.title) &&
+      !/[\u3040-\u30ff]/.test(incoming.title)
+    )
+      existing.title = incoming.title;
+    if (incoming.origin === 'official') {
+      existing.year = incoming.year;
+      existing.origin = 'official';
+      existing.officialReleaseDate =
+        incoming.officialReleaseDate ?? incoming.releaseDate;
+      if (
+        incoming.releaseDate &&
+        !existing.releaseDate?.startsWith(
+          existing.officialReleaseDate || incoming.releaseDate
+        )
+      )
+        existing.releaseDate = incoming.releaseDate;
+    } else if (incoming.origin === 'bangumi' && existing.origin !== 'official')
+      existing.year = incoming.year;
+    if (
+      incoming.releaseDate &&
+      (!existing.officialReleaseDate ||
+        incoming.releaseDate.startsWith(existing.officialReleaseDate)) &&
+      (!existing.releaseDate ||
+        incoming.releaseDate.length >= existing.releaseDate.length)
+    )
+      existing.releaseDate = incoming.releaseDate;
+  }
+  return merged.sort(
+    (a, b) => (a.year || 9999) - (b.year || 9999) || a.id.localeCompare(b.id)
   );
 }
 
@@ -283,20 +406,56 @@ export interface ShinchanSeriesGroup {
   results: SearchResult[];
 }
 
-export function buildShinchanCollection(input: SearchResult[]) {
+export function buildShinchanCollection(
+  input: SearchResult[],
+  catalog: ShinchanMovie[] = SHINCHAN_MOVIES
+) {
   const unique = new Map<string, SearchResult>();
   for (const result of input)
     if (isShinchanVideo(result))
       unique.set(`${result.source}\0${result.id}`, result);
   const groups = new Map<string, ShinchanSeriesGroup>();
-  const movies = new Map<number, SearchResult[]>();
+  let movieCatalog = mergeShinchanMovies(SHINCHAN_MOVIES, catalog);
+  // Discover source-listed movies that a metadata service has not indexed yet.
+  for (const result of Array.from(unique.values())) {
+    const name = normalizeShinchanTitle(result.title);
+    if (
+      getShinchanMovie(result, movieCatalog) ||
+      getShinchanSeason(result.title) ||
+      /合集|全集|外传|特別|特别|ova|sp$/.test(name)
+    )
+      continue;
+    const evidence = `${result.title} ${result.type_name || ''} ${
+      result.class || ''
+    } ${result.desc || ''}`;
+    const title = movieTitle(result.title);
+    if (
+      !/剧场版|劇場版|动漫电影|动画电影|動畫電影|映画|theatrical|movie/i.test(
+        evidence
+      ) ||
+      normalizeShinchanTitle(title).length < 4 ||
+      /^(?:剧场版|电影)?\s*\d{4}$/.test(title)
+    )
+      continue;
+    const year = Number(result.year?.match(/\d{4}/)?.[0]) || 0;
+    movieCatalog = mergeShinchanMovies(movieCatalog, [
+      {
+        id: `source-${year}-${normalizeShinchanTitle(title)}`,
+        year,
+        title,
+        aliases: [result.title],
+        origin: 'source',
+      },
+    ]);
+  }
+  const movies = new Map<string, SearchResult[]>();
   const bundles: SearchResult[] = [];
   const extras: SearchResult[] = [];
   for (const result of Array.from(unique.values())) {
     const title = normalizeShinchanTitle(result.title);
-    const movie = getShinchanMovie(result);
+    const movie = getShinchanMovie(result, movieCatalog);
     if (movie) {
-      movies.set(movie.year, [...(movies.get(movie.year) ?? []), result]);
+      movies.set(movie.id, [...(movies.get(movie.id) ?? []), result]);
       continue;
     }
     if (/剧场版合集|剧场版全集|电影合集|电影全集/.test(title)) {
@@ -329,6 +488,7 @@ export function buildShinchanCollection(input: SearchResult[]) {
       (a, b) => (a.season ?? 0) - (b.season ?? 0)
     ),
     movies,
+    movieCatalog,
     bundles,
     extras,
   };
