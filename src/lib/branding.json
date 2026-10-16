@@ -1,8 +1,8 @@
 {
-  "name": "春日放映室",
-  "tagline": "把日常的快乐，留给一场好电影。",
-  "description": "春日放映室 · 影视搜索与播放",
+  "name": "CrayonTV",
+  "tagline": "春日部防卫队集合，快乐放映现在开始。",
+  "description": "CrayonTV · 和春日部防卫队一起发现好电影",
   "themeColor": "#ef4444",
-  "backgroundColor": "#fff7ed",
-  "assetVersion": "kasukabe-20261016"
+  "backgroundColor": "#fffcf1",
+  "assetVersion": "crayon-squad-20261016"
 }

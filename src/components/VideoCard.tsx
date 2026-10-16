@@ -539,7 +539,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
       >
         {/* 海报容器 */}
         <div
-          className={`relative aspect-[2/3] overflow-hidden rounded-lg ${origin === 'live' ? 'ring-1 ring-gray-300/80 dark:ring-gray-600/80' : ''}`}
+          className={`crayon-video-poster relative aspect-[2/3] overflow-hidden rounded-lg ${origin === 'live' ? 'ring-1 ring-gray-300/80 dark:ring-gray-600/80' : ''}`}
           style={{
             WebkitUserSelect: 'none',
             userSelect: 'none',
@@ -620,7 +620,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
               <PlayCircleIcon
                 size={50}
                 strokeWidth={0.8}
-                className='text-white fill-transparent transition-all duration-300 ease-out hover:fill-green-500 hover:scale-[1.1]'
+                className='text-white fill-transparent transition-all duration-300 ease-out hover:fill-red-500 hover:scale-[1.1]'
                 style={{
                   WebkitUserSelect: 'none',
                   userSelect: 'none',
@@ -725,7 +725,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
 
           {actualEpisodes && actualEpisodes > 1 && (
             <div
-              className='absolute top-2 right-2 bg-green-500 text-white text-xs font-semibold px-2 py-1 rounded-md shadow-md transition-all duration-300 ease-out group-hover:scale-110'
+              className='absolute top-2 right-2 bg-red-500 text-white text-xs font-semibold px-2 py-1 rounded-md shadow-md transition-all duration-300 ease-out group-hover:scale-110'
               style={{
                 WebkitUserSelect: 'none',
                 userSelect: 'none',
@@ -765,7 +765,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
               }}
             >
               <div
-                className='bg-green-500 text-white text-xs font-bold w-7 h-7 rounded-full flex items-center justify-center shadow-md hover:bg-green-600 hover:scale-[1.1] transition-all duration-300 ease-out'
+                className='bg-red-500 text-white text-xs font-bold w-7 h-7 rounded-full flex items-center justify-center shadow-md hover:bg-red-600 hover:scale-[1.1] transition-all duration-300 ease-out'
                 style={{
                   WebkitUserSelect: 'none',
                   userSelect: 'none',
@@ -923,7 +923,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
             }}
           >
             <div
-              className='h-full bg-green-500 transition-all duration-500 ease-out'
+              className='h-full bg-red-500 transition-all duration-500 ease-out'
               style={{
                 width: `${progress}%`,
                 WebkitUserSelect: 'none',
@@ -960,7 +960,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
             } as React.CSSProperties}
           >
             <span
-              className='block text-sm font-semibold truncate text-gray-900 dark:text-gray-100 transition-colors duration-300 ease-in-out group-hover:text-green-600 dark:group-hover:text-green-400 peer'
+              className='block text-sm font-semibold truncate text-gray-900 dark:text-gray-100 transition-colors duration-300 ease-in-out group-hover:text-red-600 dark:group-hover:text-red-400 peer'
               style={{
                 WebkitUserSelect: 'none',
                 userSelect: 'none',
@@ -1011,7 +1011,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
               }}
             >
               <span
-                className='inline-block border rounded px-2 py-0.5 border-gray-500/60 dark:border-gray-400/60 transition-all duration-300 ease-in-out group-hover:border-green-500/60 group-hover:text-green-600 dark:group-hover:text-green-400'
+                className='inline-block border rounded px-2 py-0.5 border-gray-500/60 dark:border-gray-400/60 transition-all duration-300 ease-in-out group-hover:border-red-500/60 group-hover:text-red-600 dark:group-hover:text-red-400'
                 style={{
                   WebkitUserSelect: 'none',
                   userSelect: 'none',

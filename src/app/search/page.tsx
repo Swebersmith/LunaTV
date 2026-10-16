@@ -14,6 +14,7 @@ import {
 } from '@/lib/db.client';
 import { SearchResult } from '@/lib/types';
 
+import { SquadColors } from '@/components/CrayonTheme';
 import PageLayout from '@/components/PageLayout';
 import SearchResultFilter, { SearchFilterCategory } from '@/components/SearchResultFilter';
 import SearchSuggestions from '@/components/SearchSuggestions';
@@ -640,7 +641,12 @@ function SearchPageClient() {
 
   return (
     <PageLayout activePath='/search'>
-      <div className='px-4 sm:px-10 py-4 sm:py-8 overflow-visible mb-10'>
+      <div className='crayon-search px-4 sm:px-10 py-4 sm:py-8 overflow-visible mb-10'>
+        {!showResults && <div className='crayon-search-intro'>
+          <span className='crayon-badge'><SquadColors /> 防卫队搜片任务</span>
+          <h1>下一部好片，藏在哪里？</h1>
+          <p>输入片名，一起发现让今天更开心的故事。</p>
+        </div>}
         {/* 搜索框 */}
         <div className='mb-8'>
           <form onSubmit={handleSearch} className='max-w-2xl mx-auto'>
@@ -648,13 +654,14 @@ function SearchPageClient() {
               <Search className='absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 dark:text-gray-500' />
               <input
                 id='searchInput'
+                aria-label='搜索电影、电视剧或动漫'
                 type='text'
                 value={searchQuery}
                 onChange={handleInputChange}
                 onFocus={handleInputFocus}
                 placeholder='搜索电影、电视剧...'
                 autoComplete="off"
-                className='w-full h-12 rounded-lg bg-gray-50/80 py-3 pl-10 pr-12 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-400 focus:bg-white border border-gray-200/50 shadow-sm dark:bg-gray-800 dark:text-gray-300 dark:placeholder-gray-500 dark:focus:bg-gray-700 dark:border-gray-700'
+                className='w-full h-12 rounded-lg bg-gray-50/80 py-3 pl-10 pr-12 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-400 focus:bg-white border border-gray-200/50 shadow-sm dark:bg-gray-800 dark:text-gray-300 dark:placeholder-gray-500 dark:focus:bg-gray-700 dark:border-gray-700'
               />
 
               {/* 清除按钮 */}
@@ -712,7 +719,7 @@ function SearchPageClient() {
                   )}
                   {isLoading && useFluidSearch && (
                     <span className='ml-2 inline-block align-middle'>
-                      <span className='inline-block h-3 w-3 border-2 border-gray-300 border-t-green-500 rounded-full animate-spin'></span>
+                      <span className='inline-block h-3 w-3 border-2 border-gray-300 border-t-red-500 rounded-full animate-spin'></span>
                     </span>
                   )}
                 </h2>
@@ -744,7 +751,7 @@ function SearchPageClient() {
                       checked={viewMode === 'agg'}
                       onChange={() => setViewMode(viewMode === 'agg' ? 'all' : 'agg')}
                     />
-                    <div className='w-9 h-5 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
+                    <div className='w-9 h-5 bg-gray-300 rounded-full peer-checked:bg-red-500 transition-colors dark:bg-gray-600'></div>
                     <div className='absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4'></div>
                   </div>
                 </label>
@@ -752,7 +759,7 @@ function SearchPageClient() {
               {searchResults.length === 0 ? (
                 isLoading ? (
                   <div className='flex justify-center items-center h-40'>
-                    <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-green-500'></div>
+                    <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-red-500'></div>
                   </div>
                 ) : (
                   <div className='text-center text-gray-500 py-8 dark:text-gray-400'>
@@ -889,7 +896,7 @@ function SearchPageClient() {
       {/* 返回顶部悬浮按钮 */}
       <button
         onClick={scrollToTop}
-        className={`fixed bottom-20 md:bottom-6 right-6 z-[500] w-12 h-12 bg-green-500/90 hover:bg-green-500 text-white rounded-full shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out flex items-center justify-center group ${showBackToTop
+        className={`fixed bottom-20 md:bottom-6 right-6 z-[500] w-12 h-12 bg-red-500/90 hover:bg-red-500 text-white rounded-full shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out flex items-center justify-center group ${showBackToTop
           ? 'opacity-100 translate-y-0 pointer-events-auto'
           : 'opacity-0 translate-y-4 pointer-events-none'
           }`}

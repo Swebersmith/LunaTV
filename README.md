@@ -1,10 +1,10 @@
-# 春日放映室
+# CrayonTV
 
 <div align="center">
-  <img src="public/logo.png" alt="春日放映室 Logo" width="120">
+  <img src="public/logo.png" alt="CrayonTV Logo" width="120">
 </div>
 
-> 🎬 **春日放映室** 是基于 MoonTV 的影视聚合播放器，名称灵感来自小新生活的春日部。它基于 **Next.js 14** + **Tailwind&nbsp;CSS** + **TypeScript** 构建，支持多资源搜索、在线播放、收藏同步、播放记录、云端存储，让你可以随时随地畅享海量免费影视内容。
+> 🎬 **CrayonTV** 是基于 MoonTV 的影视聚合播放器，以小新和春日部防卫队为界面主题，采用奶油纸色、蜡笔红和手绘观影插画。它基于 **Next.js 14** + **Tailwind&nbsp;CSS** + **TypeScript** 构建，支持多资源搜索、在线播放、收藏同步、播放记录、云端存储，让你可以随时随地畅享海量免费影视内容。
 
 <div align="center">
 

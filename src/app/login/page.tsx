@@ -11,6 +11,7 @@ import { CURRENT_VERSION } from '@/lib/version';
 import { checkForUpdates, UpdateStatus } from '@/lib/version_check';
 
 import { BrandLogo } from '@/components/BrandLogo';
+import { SquadColors, SquadIllustration } from '@/components/CrayonTheme';
 import { useSite } from '@/components/SiteProvider';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
@@ -44,12 +45,13 @@ function VersionDisplay() {
       <span className='font-mono'>v{CURRENT_VERSION}</span>
       {!isChecking && updateStatus !== UpdateStatus.FETCH_FAILED && (
         <div
-          className={`flex items-center gap-1.5 ${updateStatus === UpdateStatus.HAS_UPDATE
-            ? 'text-yellow-600 dark:text-yellow-400'
-            : updateStatus === UpdateStatus.NO_UPDATE
-              ? 'text-green-600 dark:text-green-400'
+          className={`flex items-center gap-1.5 ${
+            updateStatus === UpdateStatus.HAS_UPDATE
+              ? 'text-yellow-600 dark:text-yellow-400'
+              : updateStatus === UpdateStatus.NO_UPDATE
+              ? 'text-red-600 dark:text-red-400'
               : ''
-            }`}
+          }`}
         >
           {updateStatus === UpdateStatus.HAS_UPDATE && (
             <>
@@ -121,71 +123,98 @@ function LoginPageClient() {
     }
   };
 
-
-
   return (
-    <div className='relative min-h-screen flex items-center justify-center overflow-hidden bg-gradient-to-br from-amber-50 via-orange-50/60 to-red-50 px-4 dark:from-zinc-950 dark:via-zinc-900 dark:to-stone-950'>
+    <div className='crayon-login'>
       <div className='absolute top-4 right-4'>
         <ThemeToggle />
       </div>
-      <div className='relative z-10 w-full max-w-md rounded-3xl bg-gradient-to-b from-white/90 via-white/70 to-white/40 dark:from-zinc-900/90 dark:via-zinc-900/70 dark:to-zinc-900/40 backdrop-blur-xl shadow-2xl p-10 dark:border dark:border-zinc-800'>
-        <div className='mb-8 flex flex-col items-center text-center'>
-          <BrandLogo size={104} priority className='mb-4 drop-shadow-sm' />
-          <h1 className='text-3xl font-extrabold tracking-tight text-red-600 dark:text-amber-300'>
-            {siteName}
-          </h1>
-          <p className='mt-3 text-sm leading-relaxed text-stone-500 dark:text-stone-400'>
-            {BRAND_TAGLINE}
+      <div className='crayon-login-layout'>
+        <section
+          className='crayon-login-poster'
+          aria-label='春日部防卫队观影俱乐部'
+        >
+          <span className='crayon-badge'>
+            <SquadColors /> KASUKABE MOVIE CLUB
+          </span>
+          <h2>
+            快乐这件事，
+            <br />
+            <span>一起就对了。</span>
+          </h2>
+          <p>
+            小新和朋友们已经就位。
+            <br />
+            今天的好故事，就差一个你。
           </p>
-        </div>
-        <form onSubmit={handleSubmit} className='space-y-8'>
-          {shouldAskUsername && (
+          <div className='crayon-login-illustration'>
+            <SquadIllustration priority />
+          </div>
+          <span className='crayon-ticket'>
+            一张通往好心情的电影票 <span aria-hidden='true'>✦</span>
+          </span>
+        </section>
+        <div className='crayon-login-card'>
+          <div className='mb-8 flex flex-col items-center text-center'>
+            <BrandLogo size={76} priority className='mb-3 drop-shadow-sm' />
+            <h1 className='crayon-wordmark text-4xl font-black tracking-tight text-red-600 dark:text-amber-300'>
+              {siteName}
+            </h1>
+            <p className='mt-3 text-sm leading-relaxed text-stone-500 dark:text-stone-400'>
+              {BRAND_TAGLINE}
+            </p>
+          </div>
+          <form onSubmit={handleSubmit} className='space-y-5'>
+            {shouldAskUsername && (
+              <div>
+                <label htmlFor='username' className='crayon-field-label'>
+                  用户名
+                </label>
+                <input
+                  id='username'
+                  type='text'
+                  autoComplete='username'
+                  className='block w-full rounded-lg border-0 py-3 px-4 text-gray-900 dark:text-gray-100 shadow-sm ring-1 ring-white/60 dark:ring-white/20 placeholder:text-gray-500 dark:placeholder:text-gray-400 focus:ring-2 focus:ring-red-500 focus:outline-none sm:text-base bg-white/60 dark:bg-zinc-800/60 backdrop-blur'
+                  placeholder='输入用户名'
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              </div>
+            )}
+
             <div>
-              <label htmlFor='username' className='sr-only'>
-                用户名
+              <label htmlFor='password' className='crayon-field-label'>
+                密码
               </label>
               <input
-                id='username'
-                type='text'
-                autoComplete='username'
-                className='block w-full rounded-lg border-0 py-3 px-4 text-gray-900 dark:text-gray-100 shadow-sm ring-1 ring-white/60 dark:ring-white/20 placeholder:text-gray-500 dark:placeholder:text-gray-400 focus:ring-2 focus:ring-green-500 focus:outline-none sm:text-base bg-white/60 dark:bg-zinc-800/60 backdrop-blur'
-                placeholder='输入用户名'
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                id='password'
+                type='password'
+                autoComplete='current-password'
+                className='block w-full rounded-lg border-0 py-3 px-4 text-gray-900 dark:text-gray-100 shadow-sm ring-1 ring-white/60 dark:ring-white/20 placeholder:text-gray-500 dark:placeholder:text-gray-400 focus:ring-2 focus:ring-red-500 focus:outline-none sm:text-base bg-white/60 dark:bg-zinc-800/60 backdrop-blur'
+                placeholder='输入访问密码'
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </div>
-          )}
 
-          <div>
-            <label htmlFor='password' className='sr-only'>
-              密码
-            </label>
-            <input
-              id='password'
-              type='password'
-              autoComplete='current-password'
-              className='block w-full rounded-lg border-0 py-3 px-4 text-gray-900 dark:text-gray-100 shadow-sm ring-1 ring-white/60 dark:ring-white/20 placeholder:text-gray-500 dark:placeholder:text-gray-400 focus:ring-2 focus:ring-green-500 focus:outline-none sm:text-base bg-white/60 dark:bg-zinc-800/60 backdrop-blur'
-              placeholder='输入访问密码'
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+            {error && (
+              <p className='text-sm text-red-600 dark:text-red-400'>{error}</p>
+            )}
+
+            {/* 登录按钮 */}
+            <button
+              type='submit'
+              disabled={
+                !password || loading || (shouldAskUsername && !username)
+              }
+              className='crayon-button w-full justify-center disabled:cursor-not-allowed disabled:opacity-50'
+            >
+              {loading ? '登录中...' : '登录，开始放映'}
+            </button>
+          </form>
+          <div className='mt-7 flex justify-center'>
+            <SquadColors />
           </div>
-
-          {error && (
-            <p className='text-sm text-red-600 dark:text-red-400'>{error}</p>
-          )}
-
-          {/* 登录按钮 */}
-          <button
-            type='submit'
-            disabled={
-              !password || loading || (shouldAskUsername && !username)
-            }
-            className='inline-flex w-full justify-center rounded-lg bg-red-600 py-3 text-base font-semibold text-white shadow-lg shadow-red-500/15 transition-all duration-200 hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50'
-          >
-            {loading ? '登录中...' : '登录'}
-          </button>
-        </form>
+        </div>
       </div>
 
       {/* 版本信息显示 */}
