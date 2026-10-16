@@ -74,25 +74,9 @@ function LoginPageClient() {
           className='crayon-login-poster'
           aria-label='春日部防卫队观影俱乐部'
         >
-          <span className='crayon-badge'>
-            <SquadColors /> KASUKABE MOVIE CLUB
-          </span>
-          <h2>
-            快乐这件事，
-            <br />
-            <span>一起就对了。</span>
-          </h2>
-          <p>
-            小新和朋友们已经就位。
-            <br />
-            今天的好故事，就差一个你。
-          </p>
           <div className='crayon-login-illustration'>
             <SquadIllustration priority />
           </div>
-          <span className='crayon-ticket'>
-            一张通往好心情的电影票 <span aria-hidden='true'>✦</span>
-          </span>
         </section>
         <div className='crayon-login-card'>
           <div className='mb-8 flex flex-col items-center text-center'>

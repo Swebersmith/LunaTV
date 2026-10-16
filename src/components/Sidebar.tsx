@@ -292,13 +292,6 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                 })}
               </div>
             </div>
-            {!isCollapsed && (
-              <div className='crayon-sidebar-note'>
-                <span className='crayon-badge'>KASUKABE MOVIE CLUB</span>
-                <p>今天的任务：<br /><strong>找到一部让自己开心的电影。</strong></p>
-                <SquadColors />
-              </div>
-            )}
           </div>
         </aside>
         <div

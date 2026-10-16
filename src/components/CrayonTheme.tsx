@@ -1,4 +1,3 @@
-import { ArrowRight, Search, Sparkles } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 
@@ -37,38 +36,15 @@ export function SquadIllustration({
 
 export function SquadHero() {
   return (
-    <section className='crayon-hero' aria-labelledby='squad-hero-title'>
-      <div className='crayon-hero-copy'>
-        <span className='crayon-badge'>
-          <SquadColors /> 春日部防卫队的放映时间
-        </span>
-        <h1 id='squad-hero-title'>
-          今天，也要
-          <br />
-          <span>快乐放映！</span>
-        </h1>
-        <p>
-          带上零食和好心情，和小新他们一起，
-          <br className='hidden sm:block' />
-          寻找下一部让你舍不得关掉的好片。
-        </p>
-        <div className='crayon-hero-actions'>
-          <Link href='/search' className='crayon-button'>
-            <Search size={17} /> 搜索好片 <ArrowRight size={17} />
-          </Link>
-          <Link href='/shinchan' className='crayon-secondary-link'>
-            去看小新 <Sparkles size={16} />
-          </Link>
-        </div>
-      </div>
+    <Link
+      href='/shinchan'
+      className='crayon-hero'
+      aria-label='进入蜡笔小新专区'
+    >
       <div className='crayon-hero-art'>
-        <span className='crayon-sun' aria-hidden='true' />
-        <span className='crayon-art-label' aria-hidden='true'>
-          MOVIE TIME!
-        </span>
         <SquadIllustration priority />
       </div>
-    </section>
+    </Link>
   );
 }
 
