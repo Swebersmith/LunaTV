@@ -56,8 +56,8 @@ export function SquadHero() {
           <Link href='/search' className='crayon-button'>
             <Search size={17} /> 搜索好片 <ArrowRight size={17} />
           </Link>
-          <Link href='/douban?type=anime' className='crayon-secondary-link'>
-            去看动漫 <Sparkles size={16} />
+          <Link href='/shinchan' className='crayon-secondary-link'>
+            去看小新 <Sparkles size={16} />
           </Link>
         </div>
       </div>
