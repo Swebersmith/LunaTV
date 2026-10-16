@@ -1,6 +1,9 @@
+'use client';
+
 import { Radio, X } from 'lucide-react';
 import Image from 'next/image';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ActionItem {
   id: string;
@@ -40,6 +43,8 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
 
   // 控制动画状态
   useEffect(() => {
@@ -122,6 +127,37 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
     }
   }, [isVisible]);
 
+  // 将键盘焦点留在当前弹层，关闭后恢复到原来的控件。
+  useEffect(() => {
+    if (!isVisible) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    panelRef.current?.focus({ preventScroll: true });
+
+    const handleTab = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const panel = panelRef.current;
+      const controls = panel?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])'
+      );
+      if (!panel || !controls?.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      const outside = !panel.contains(document.activeElement) || document.activeElement === panel;
+      if (event.shiftKey && (document.activeElement === first || outside)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || outside)) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleTab);
+    return () => {
+      document.removeEventListener('keydown', handleTab);
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  }, [isVisible]);
+
   // ESC键关闭
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -136,7 +172,7 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
     }
   }, [isVisible, onClose]);
 
-  if (!isVisible) return null;
+  if (!isVisible || typeof document === 'undefined') return null;
 
   const getActionColor = (color: ActionItem['color']) => {
     switch (color) {
@@ -160,31 +196,19 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
     }
   };
 
-  return (
+  // 虚拟列表的 transform 会改变 fixed 的定位范围；挂载到 body 避免被行容器限制。
+  return createPortal(
     <div
-      className="fixed inset-0 z-[9999] flex items-end justify-center"
-      onTouchMove={(e) => {
-        // 阻止最外层容器的触摸移动，防止背景滚动
-        e.preventDefault();
-        e.stopPropagation();
-      }}
-      style={{
-        touchAction: 'none', // 禁用所有触摸操作
-      }}
+      data-video-action-sheet
+      className="fixed inset-0 z-[10000] flex items-end justify-center"
+      onClick={(event) => event.stopPropagation()}
     >
       {/* 背景遮罩 */}
       <div
+        data-video-action-backdrop
         className={`absolute inset-0 bg-black/50 transition-opacity duration-200 ease-out ${isAnimating ? 'opacity-100' : 'opacity-0'
           }`}
         onClick={onClose}
-        onTouchMove={(e) => {
-          // 只阻止滚动，允许其他触摸事件（包括点击）
-          e.preventDefault();
-        }}
-        onWheel={(e) => {
-          // 阻止滚轮滚动
-          e.preventDefault();
-        }}
         style={{
           backdropFilter: 'blur(4px)',
           willChange: 'opacity',
@@ -194,20 +218,26 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
 
       {/* 操作表单 */}
       <div
-        className="relative w-full max-w-lg mx-4 mb-4 bg-white dark:bg-gray-900 rounded-2xl shadow-2xl transition-all duration-200 ease-out"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="relative w-full max-w-lg mx-4 mb-4 overflow-y-auto overscroll-contain bg-white dark:bg-gray-900 rounded-2xl shadow-2xl transition-[transform,opacity] duration-200 ease-out focus:outline-none"
         onTouchMove={(e) => {
           // 允许操作表单内部滚动，阻止事件冒泡到外层
           e.stopPropagation();
         }}
         style={{
           marginBottom: 'calc(1rem + env(safe-area-inset-bottom))',
+          maxHeight: 'calc(100% - 2rem - env(safe-area-inset-bottom))',
           willChange: 'transform, opacity',
           backfaceVisibility: 'hidden', // 避免闪烁
           transform: isAnimating
             ? 'translateY(0) translateZ(0)'
             : 'translateY(100%) translateZ(0)', // 组合变换保持滑入效果和硬件加速
           opacity: isAnimating ? 1 : 0,
-          touchAction: 'auto', // 允许操作表单内的正常触摸操作
+          touchAction: 'pan-y',
         }}
       >
         {/* 头部 */}
@@ -226,7 +256,7 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
             )}
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
+                <h3 id={titleId} className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
                   {title}
                 </h3>
                 {sourceName && (
@@ -245,6 +275,8 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
           </div>
 
           <button
+            type="button"
+            aria-label="关闭详情"
             onClick={onClose}
             className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-150"
           >
@@ -257,6 +289,7 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
           {actions.map((action, index) => (
             <div key={action.id}>
               <button
+                type="button"
                 onClick={() => {
                   action.onClick();
                   onClose();
@@ -342,7 +375,8 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 
