@@ -86,6 +86,7 @@ export default function SourceEditor({
               </label>
               <input
                 id={`${id}-${field.key}`}
+                autoFocus={field.key === 'name'}
                 name={field.key}
                 type={field.url ? 'url' : 'text'}
                 inputMode={field.url ? 'url' : undefined}
