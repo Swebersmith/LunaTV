@@ -5,25 +5,13 @@ import { CloudflareD1Storage } from './cloudflare-d1.db';
 import { CloudflareKVStorage } from './cloudflare-kv.db';
 import { KvrocksStorage } from './kvrocks.db';
 import { RedisStorage } from './redis.db';
+import { getStorageType } from './storage-type';
 import { Favorite, IStorage, PlayRecord, SkipConfig } from './types';
 import { UpstashRedisStorage } from './upstash.db';
 
-// storage type 常量: 'localstorage' | 'redis' | 'upstash'，默认 'localstorage'
-const STORAGE_TYPE =
-  (process.env.NEXT_PUBLIC_STORAGE_TYPE as
-    | 'localstorage'
-    | 'redis'
-    | 'upstash'
-    | 'kvrocks'
-    | 'cloudflare-kv'
-    | 'kv'
-    | 'cloudflare-d1'
-    | 'd1'
-    | undefined) || 'localstorage';
-
 // 创建存储实例
 function createStorage(): IStorage {
-  switch (STORAGE_TYPE) {
+  switch (getStorageType()) {
     case 'redis':
       return new RedisStorage();
     case 'upstash':

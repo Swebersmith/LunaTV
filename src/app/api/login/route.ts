@@ -3,17 +3,9 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { getStorageType } from '@/lib/storage-type';
 
 export const runtime = 'nodejs';
-
-// 读取存储类型环境变量，默认 localstorage
-const STORAGE_TYPE =
-  (process.env.NEXT_PUBLIC_STORAGE_TYPE as
-    | 'localstorage'
-    | 'redis'
-    | 'upstash'
-    | 'kvrocks'
-    | undefined) || 'localstorage';
 
 // 生成签名
 async function generateSignature(
@@ -70,7 +62,7 @@ async function generateAuthCookie(
 export async function POST(req: NextRequest) {
   try {
     // 本地 / localStorage 模式——仅校验固定密码
-    if (STORAGE_TYPE === 'localstorage') {
+    if (getStorageType() === 'localstorage') {
       const envPassword = process.env.PASSWORD;
 
       // 未配置 PASSWORD 时直接放行

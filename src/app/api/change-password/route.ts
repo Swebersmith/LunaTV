@@ -4,11 +4,12 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { getStorageType } from '@/lib/storage-type';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
-  const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
+  const storageType = getStorageType();
 
   // 不支持 localstorage 模式
   if (storageType === 'localstorage') {

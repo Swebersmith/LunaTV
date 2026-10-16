@@ -11,6 +11,9 @@ const { Miniflare } = require(require.resolve('miniflare', {
   paths: [require.resolve('wrangler/package.json')],
 }));
 
+// Starting a real workerd process can exceed Jest's 5s default on Windows.
+jest.setTimeout(30000);
+
 describe('Cloudflare D1 storage (real SQLite in workerd)', () => {
   let runtime: {
     getD1Database(name: string): Promise<CloudflareD1Binding>;

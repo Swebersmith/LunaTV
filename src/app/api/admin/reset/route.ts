@@ -4,11 +4,12 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { resetConfig } from '@/lib/config';
+import { getStorageType } from '@/lib/storage-type';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
-  const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
+  const storageType = getStorageType();
   if (storageType === 'localstorage') {
     return NextResponse.json(
       {

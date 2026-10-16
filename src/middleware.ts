@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
+import { getStorageType } from '@/lib/storage-type';
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -12,7 +13,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
+  const storageType = getStorageType();
 
   if (!process.env.PASSWORD) {
     // 如果没有设置密码，重定向到警告页面

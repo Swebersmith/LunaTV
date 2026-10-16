@@ -8,6 +8,7 @@ import { getAuthInfoFromCookie } from '@/lib/auth';
 import { configSelfCheck, setCachedConfig } from '@/lib/config';
 import { SimpleCrypto } from '@/lib/crypto';
 import { db } from '@/lib/db';
+import { getStorageType } from '@/lib/storage-type';
 
 export const runtime = 'nodejs';
 
@@ -16,7 +17,7 @@ const gunzipAsync = promisify(gunzip);
 export async function POST(req: NextRequest) {
   try {
     // 检查存储类型
-    const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
+    const storageType = getStorageType();
     if (storageType === 'localstorage') {
       return NextResponse.json(
         { error: '不支持本地存储进行数据迁移' },

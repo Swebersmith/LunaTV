@@ -75,7 +75,7 @@
 
 ### Cloudflare Workers + D1
 
-已修复读取配置时写回、直播重复保存和未鉴权的定时刷新，并降低播放进度的自动写入频率。新增 D1 支持，启用前需配置绑定、建表并迁移数据。[查看 D1 配置及 KV 数据迁移步骤](docs/cloudflare-d1.md)。现有 KV 部署仍然兼容。
+已修复读取配置时写回、直播重复保存和未鉴权的定时刷新，并降低播放进度的自动写入频率。支持通过 Cloudflare 私有绑定使用 D1，数据库 ID、账号 ID 和域名无需提交到仓库。[查看 D1 配置及 KV 数据迁移步骤](docs/cloudflare-d1.md)。现有 KV 部署仍然兼容。
 
 当前生产实例由 Cloudflare Workers Builds 从 GitHub 仓库
 [`Swebersmith/LunaTV`](https://github.com/Swebersmith/LunaTV) 的 `main` 分支自动构建和发布。
@@ -93,14 +93,14 @@ Cloudflare 中的构建与运行配置如下：
 在 Worker 的 **Settings > Variables and Secrets** 中为 Production 配置以下变量：
 
 ```env
-NEXT_PUBLIC_STORAGE_TYPE=cloudflare-d1
+STORAGE_TYPE=cloudflare-d1
 USERNAME=admin
 PASSWORD=replace-with-a-strong-secret
 ```
 
 `PASSWORD` 必须以 Secret 形式保存。`USERNAME` 可以改为自己的管理员账号。
-启用 D1 时在 `wrangler.jsonc` 的 `vars` 中设置存储类型。`cf:build` 自动从该配置读取存储类型，确保构建和运行配置一致。
-创建或迁移到其他 Cloudflare 账号时，需要替换 `wrangler.jsonc` 中的数据库 ID 并执行建表迁移；不要将密码、Token 或个人域名提交到仓库。
+`STORAGE_TYPE` 在 Cloudflare 控制台保存，优先于旧的构建变量。部署配置保留 Cloudflare 中已有的资源绑定及密钥。
+创建或迁移到其他 Cloudflare 账号时，在控制台添加自己的 `LUNATV_D1` 绑定并执行建表迁移；不要将数据库 ID、账号 ID、密码、Token 或个人域名提交到仓库。
 
 ### zeabur 一键部署
 
@@ -361,6 +361,7 @@ dockge/komodo 等 docker compose UI 也有自动更新功能
 | NEXT_PUBLIC_SITE_NAME               | 站点名称                                     | 任意字符串                       | MoonTV                                                                                                                     |
 | ANNOUNCEMENT                        | 站点公告                                     | 任意字符串                       | 本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。 |
 | NEXT_PUBLIC_STORAGE_TYPE            | 播放记录/收藏的存储方式                      | redis、kvrocks、upstash、cloudflare-kv、cloudflare-d1 | 默认 localstorage；Cloudflare 推荐使用 cloudflare-d1，需先配置绑定和建表                                                                        |
+| STORAGE_TYPE                        | 私有运行时存储选择                          | 与上行相同                         | 优先于 NEXT_PUBLIC_STORAGE_TYPE；Cloudflare 推荐在控制台配置 |
 | LUNATV_KV                           | Cloudflare Workers KV 资源绑定               | KV binding 名称                    | 空；使用 cloudflare-kv 时必须绑定到 KV 命名空间                                                                              |
 | LUNATV_D1                           | Cloudflare D1 数据库绑定                     | D1 binding 名称                    | 使用 cloudflare-d1 时必须绑定并执行 migrations |
 | CRON_SECRET                         | 定时刷新接口密钥                             | Worker Secret                      | 未设置时关闭 /api/cron；调用方通过 Bearer 认证 |

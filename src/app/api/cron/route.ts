@@ -7,6 +7,7 @@ import { getConfig, refineConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { fetchVideoDetail } from '@/lib/fetchVideoDetail';
 import { refreshLiveChannels } from '@/lib/live';
+import { getStorageType } from '@/lib/storage-type';
 import { SearchResult } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -243,7 +244,7 @@ async function refreshRecordAndFavorites() {
         await runWithConcurrency(
           tasks,
           ['cloudflare-kv', 'kv'].includes(
-            process.env.NEXT_PUBLIC_STORAGE_TYPE || ''
+            getStorageType()
           )
             ? 1
             : 5
@@ -302,7 +303,7 @@ async function refreshRecordAndFavorites() {
         await runWithConcurrency(
           tasks,
           ['cloudflare-kv', 'kv'].includes(
-            process.env.NEXT_PUBLIC_STORAGE_TYPE || ''
+            getStorageType()
           )
             ? 1
             : 5

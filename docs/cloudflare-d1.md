@@ -20,7 +20,7 @@
 
 ## 启用 D1
 
-本仓库支持 D1 和 KV 两种存储。启用 D1 需要按下面步骤绑定数据库并迁移数据。建议保留旧 KV 绑定用于回退。`cf:build` 从 `wrangler.jsonc` 读取存储类型，避免旧的构建环境变量把应用重新编译为 KV；代码更新不会自动创建数据库或复制已有数据。
+本仓库支持 D1 和 KV 两种存储。数据库 ID、账号 ID 和域名都保留在 Cloudflare 私有配置中，不需要提交到仓库。`wrangler.jsonc` 通过 Cloudflare 的 `keep_bindings` 上传元数据保留已配置的 D1、KV、运行变量和密钥；首次部署前需要在控制台建立绑定。代码更新不会自动创建数据库或复制已有数据。
 
 1. 安装依赖并登录正确的 Cloudflare 账号：
 
@@ -30,28 +30,17 @@
    pnpm exec wrangler d1 create lunatv
    ```
 
-2. 将创建结果中的真实数据库 ID 添加到 `wrangler.jsonc` 的顶层，保留原有字段：
-
-   ```jsonc
-   "d1_databases": [
-     {
-       "binding": "LUNATV_D1",
-       "database_name": "lunatv",
-       "database_id": "填写上一步创建的真实 ID",
-       "migrations_dir": "migrations"
-     }
-   ]
-   ```
+2. 在 Cloudflare 控制台打开 Worker → Bindings → Add binding → D1 database，将变量名设为 `LUNATV_D1`，选择新建的数据库。真实数据库 ID 保留在 Cloudflare 中，不写入公开配置文件。
 
 3. 在切换存储类型之前创建表：
 
    ```sh
-   pnpm exec wrangler d1 migrations apply LUNATV_D1 --remote
+   pnpm exec wrangler d1 execute lunatv --remote --file migrations/0001_storage.sql
    ```
 
 4. 如需保留已有账户、配置、收藏和进度，先执行下一节的迁移。迁移期间暂停网站访问和定时任务，避免复制后旧 KV 继续收到更新；在完成校验之前不要切换到 D1。
 
-5. 在 `wrangler.jsonc` 的 `vars` 中设置 `NEXT_PUBLIC_STORAGE_TYPE=cloudflare-d1`，保持原来的 `USERNAME`、`PASSWORD` 等配置。提交真实绑定配置后重新构建部署（`pnpm cf:deploy`）；`cf:build` 自动同步构建变量。如果绕过此构建脚本直接运行 `next build`，必须自行设置同名构建变量。`NEXT_PUBLIC_` 变量会参与前端构建，只改运行变量不足以完成切换。
+5. 在 Worker → Settings → Variables and Secrets 中新增私有运行变量 `STORAGE_TYPE=cloudflare-d1`（可保存为 Secret），保留 `USERNAME`、`PASSWORD` 等原有配置，再重新部署。应用优先读取这个私有运行变量；旧的 `NEXT_PUBLIC_STORAGE_TYPE` 仅作为兼容回退，即使历史构建变量仍为 KV，也不会覆盖私有选择。浏览器只接收存储类型，不接收数据库 ID 或凭据。
 
 6. 验证站长和普通用户登录、播放进度、收藏、搜索历史及跳过片头片尾设置。在 D1 的 Metrics → Row Metrics 核对用量。确认无误后可以移除 `LUNATV_KV` 绑定；先保留旧命名空间作为回退副本。
 
@@ -86,4 +75,4 @@ node scripts/migrate-kv-to-d1.mjs --write
 
 ## 回退
 
-保留旧 KV 时，可将 `wrangler.jsonc` 的 `vars.NEXT_PUBLIC_STORAGE_TYPE` 改回 `cloudflare-kv`，通过 `pnpm cf:deploy` 重新构建部署。切换后新产生的 D1 数据不会自动复制回 KV，回退前应保留 D1 数据。不要直接删除任何旧数据库或命名空间。
+保留旧 KV 时，可在 Cloudflare 控制台私下恢复 `LUNATV_KV` 绑定，将私有 `STORAGE_TYPE` 改为 `cloudflare-kv`，再重新部署。切换后新产生的 D1 数据不会自动复制回 KV，回退前应保留 D1 数据。不要直接删除任何旧数据库或命名空间。

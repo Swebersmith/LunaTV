@@ -3,15 +3,24 @@
   "name": "lunatv",
   "main": ".open-next/worker.js",
   "compatibility_date": "2025-04-01",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
-  "kv_namespaces": [
-    {
-      "binding": "LUNATV_KV",
-      "id": "b56b9fe1d9f64c02bcc4098598b45d7b"
+  "unsafe": {
+    "metadata": {
+      "keep_bindings": [
+        "plain_text",
+        "json",
+        "secret_text",
+        "secret_key",
+        "kv_namespace",
+        "d1"
+      ]
     }
-  ]
+  }
 }
