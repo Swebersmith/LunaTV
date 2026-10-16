@@ -16,11 +16,12 @@ const MobileHeader = ({ showBackButton = false }: MobileHeaderProps) => {
   const { siteName } = useSite();
   return (
     <header className='crayon-mobile-header md:hidden fixed top-0 left-0 right-0 z-[999] w-full backdrop-blur-xl border-b'>
-      <div className='h-12 flex items-center justify-between px-4'>
+      <div className='crayon-mobile-header-layout'>
         {/* 左侧：搜索按钮、返回按钮和设置按钮 */}
-        <div className='flex items-center gap-2'>
+        <div className='flex items-center gap-1'>
           <Link
             href='/search'
+            aria-label='搜索影片'
             className='w-10 h-10 p-2 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200/50 dark:text-gray-300 dark:hover:bg-gray-700/50 transition-colors'
           >
             <svg
@@ -41,22 +42,21 @@ const MobileHeader = ({ showBackButton = false }: MobileHeaderProps) => {
           {showBackButton && <BackButton />}
         </div>
 
+        <Link
+          href='/'
+          aria-label={siteName}
+          title={siteName}
+          className='crayon-mobile-brand crayon-wordmark flex min-w-0 items-center font-black text-red-600 hover:opacity-80 transition-opacity dark:text-amber-300'
+        >
+          <BrandLogo size={24} />
+          <span className='min-w-0 truncate'>{siteName}</span>
+        </Link>
+
         {/* 右侧按钮 */}
-        <div className='flex items-center gap-2'>
+        <div className='flex items-center justify-end gap-1'>
           <ThemeToggle />
           <UserMenu />
         </div>
-      </div>
-
-      {/* 中间：Logo（绝对居中） */}
-      <div className='absolute top-1/2 left-1/2 max-w-[calc(100%-11rem)] -translate-x-1/2 -translate-y-1/2'>
-        <Link
-          href='/'
-          className='crayon-wordmark flex items-center gap-1.5 text-base font-black tracking-tight text-red-600 hover:opacity-80 transition-opacity dark:text-amber-300 sm:text-base'
-        >
-          <BrandLogo size={24} />
-          <span className='truncate'>{siteName}</span>
-        </Link>
       </div>
     </header>
   );

@@ -502,7 +502,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   return (
     <>
       <div
-        className='group relative w-full rounded-lg bg-transparent cursor-pointer transition-all duration-300 ease-in-out hover:scale-[1.05] hover:z-[500]'
+        className='group relative min-w-0 w-full rounded-lg bg-transparent cursor-pointer transition-all duration-300 ease-in-out hover:scale-[1.05] hover:z-[500]'
         onClick={handleClick}
         {...longPressProps}
         style={{
@@ -940,7 +940,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
 
         {/* 标题与来源 */}
         <div
-          className='mt-2 text-center'
+          className='crayon-video-caption mt-2 min-w-0 text-center'
           style={{
             WebkitUserSelect: 'none',
             userSelect: 'none',
@@ -960,7 +960,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
             } as React.CSSProperties}
           >
             <span
-              className='block text-sm font-semibold truncate text-gray-900 dark:text-gray-100 transition-colors duration-300 ease-in-out group-hover:text-red-600 dark:group-hover:text-red-400 peer'
+              className='crayon-video-title block text-sm font-semibold truncate text-gray-900 dark:text-gray-100 transition-colors duration-300 ease-in-out group-hover:text-red-600 dark:group-hover:text-red-400 peer'
+              title={actualTitle}
               style={{
                 WebkitUserSelect: 'none',
                 userSelect: 'none',
@@ -975,7 +976,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
             </span>
             {/* 自定义 tooltip */}
             <div
-              className='absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1 bg-gray-800 text-white text-xs rounded-md shadow-lg opacity-0 invisible peer-hover:opacity-100 peer-hover:visible transition-all duration-200 ease-out delay-100 whitespace-nowrap pointer-events-none'
+              className='hidden md:block absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1 bg-gray-800 text-white text-xs rounded-md shadow-lg opacity-0 invisible peer-hover:opacity-100 peer-hover:visible transition-all duration-200 ease-out delay-100 w-max max-w-[min(24rem,80vw)] whitespace-normal break-words pointer-events-none'
               style={{
                 WebkitUserSelect: 'none',
                 userSelect: 'none',
@@ -1011,7 +1012,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
               }}
             >
               <span
-                className='inline-block border rounded px-2 py-0.5 border-gray-500/60 dark:border-gray-400/60 transition-all duration-300 ease-in-out group-hover:border-red-500/60 group-hover:text-red-600 dark:group-hover:text-red-400'
+                className='crayon-video-source inline-block max-w-full truncate align-top border rounded px-2 py-0.5 border-gray-500/60 dark:border-gray-400/60 transition-all duration-300 ease-in-out group-hover:border-red-500/60 group-hover:text-red-600 dark:group-hover:text-red-400'
+                title={source_name}
                 style={{
                   WebkitUserSelect: 'none',
                   userSelect: 'none',

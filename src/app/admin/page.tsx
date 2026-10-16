@@ -47,6 +47,7 @@ import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 import AdminAccessError from '@/components/AdminAccessError';
 import DataMigration from '@/components/DataMigration';
 import PageLayout from '@/components/PageLayout';
+import SourceAddress from '@/components/SourceAddress';
 
 // 统一按钮样式系统
 const buttonStyles = {
@@ -2335,43 +2336,47 @@ const VideoSourceConfig = ({
       <tr
         ref={setNodeRef}
         style={style}
-        className='hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors select-none'
+        className='source-list-row hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors select-none'
       >
         <td
           className='px-2 py-4 cursor-grab text-gray-400'
+          data-source-cell='drag'
           style={{ touchAction: 'none' }}
           {...attributes}
           {...listeners}
         >
           <GripVertical size={16} />
         </td>
-        <td className='px-2 py-4 text-center'>
+        <td className='px-2 py-4 text-center' data-source-cell='select'>
           <input
             type='checkbox'
             checked={selectedSources.has(source.key)}
+            aria-label={`选择视频源 ${source.name}`}
             onChange={(e) => handleSelectSource(source.key, e.target.checked)}
             className='w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600'
           />
         </td>
-        <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
+        <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100' data-source-cell='name'>
           {source.name}
         </td>
-        <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100'>
+        <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100' data-source-cell='key' data-label='Key'>
           {source.key}
         </td>
         <td
-          className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 max-w-[12rem] truncate'
-          title={source.api}
+          className='min-w-[16rem] max-w-[24rem] px-4 py-4 text-sm'
+          data-source-cell='api'
+          data-label='API 地址'
         >
-          {source.api}
+          <SourceAddress value={source.api} label={`${source.name} API 地址`} />
         </td>
         <td
-          className='px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 max-w-[8rem] truncate'
-          title={source.detail || '-'}
+          className='min-w-[12rem] max-w-[20rem] px-4 py-4 text-sm'
+          data-source-cell='detail'
+          data-label='Detail 地址'
         >
-          {source.detail || '-'}
+          <SourceAddress value={source.detail} label={`${source.name} Detail 地址`} />
         </td>
-        <td className='px-6 py-4 whitespace-nowrap max-w-[1rem]'>
+        <td className='px-6 py-4 whitespace-nowrap max-w-[1rem]' data-source-cell='status'>
           <span
             className={`px-2 py-1 text-xs rounded-full ${!source.disabled
               ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300'
@@ -2381,7 +2386,7 @@ const VideoSourceConfig = ({
             {!source.disabled ? '启用中' : '已禁用'}
           </span>
         </td>
-        <td className='px-6 py-4 whitespace-nowrap max-w-[1rem]'>
+        <td className='px-6 py-4 whitespace-nowrap max-w-[1rem]' data-source-cell='validation'>
           {(() => {
             const status = getValidationStatus(source.key);
             if (!status) {
@@ -2398,7 +2403,7 @@ const VideoSourceConfig = ({
             );
           })()}
         </td>
-        <td className='px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2'>
+        <td className='px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2' data-source-cell='actions'>
           <button
             onClick={() => handleToggleEnable(source.key)}
             disabled={isLoading(`toggleSource_${source.key}`)}
@@ -2595,6 +2600,11 @@ const VideoSourceConfig = ({
             <input
               type='text'
               placeholder='API 地址'
+              aria-label='API 地址'
+              inputMode='url'
+              autoCapitalize='none'
+              autoCorrect='off'
+              spellCheck={false}
               value={newSource.api}
               onChange={(e) =>
                 setNewSource((prev) => ({ ...prev, api: e.target.value }))
@@ -2604,6 +2614,11 @@ const VideoSourceConfig = ({
             <input
               type='text'
               placeholder='Detail 地址（选填）'
+              aria-label='Detail 地址（选填）'
+              inputMode='url'
+              autoCapitalize='none'
+              autoCorrect='off'
+              spellCheck={false}
               value={newSource.detail}
               onChange={(e) =>
                 setNewSource((prev) => ({ ...prev, detail: e.target.value }))
@@ -2627,7 +2642,7 @@ const VideoSourceConfig = ({
 
       {/* 视频源表格 */}
       <div className='border border-gray-200 dark:border-gray-700 rounded-lg max-h-[28rem] overflow-y-auto overflow-x-auto relative' data-table="source-list">
-        <table className='min-w-full divide-y divide-gray-200 dark:divide-gray-700'>
+        <table className='source-list-table min-w-full divide-y divide-gray-200 dark:divide-gray-700'>
           <thead className='bg-gray-50 dark:bg-gray-900 sticky top-0 z-10'>
             <tr>
               <th className='w-8' />
@@ -2635,6 +2650,7 @@ const VideoSourceConfig = ({
                 <input
                   type='checkbox'
                   checked={selectAll}
+                  aria-label='选择全部视频源'
                   onChange={(e) => handleSelectAll(e.target.checked)}
                   className='w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600'
                 />
@@ -3561,26 +3577,6 @@ const SiteConfigComponent = ({ config, refreshConfig }: { config: AdminConfig | 
           onChange={(e) =>
             setSiteSettings((prev) => ({ ...prev, SiteName: e.target.value }))
           }
-          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent"
-        />
-      </div>
-
-      {/* 站点公告 */}
-      <div>
-        <label
-          className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-        >
-          站点公告
-        </label>
-        <textarea
-          value={siteSettings.Announcement}
-          onChange={(e) =>
-            setSiteSettings((prev) => ({
-              ...prev,
-              Announcement: e.target.value,
-            }))
-          }
-          rows={3}
           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent"
         />
       </div>
