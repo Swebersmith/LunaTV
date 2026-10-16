@@ -1,6 +1,13 @@
 import { AdminConfig } from './admin.types';
+import { withD1Schema } from './d1-schema';
 import { hashPassword, isHashed, verifyPassword } from './password';
-import { Favorite, IStorage, PlayRecord, SkipConfig } from './types';
+import {
+  Favorite,
+  IStorage,
+  PlayRecord,
+  SkipConfig,
+  StorageBackup,
+} from './types';
 
 // Structural binding types keep tests independent of the Workers runtime.
 export interface D1Statement {
@@ -28,7 +35,7 @@ function getRuntimeBinding(): CloudflareD1Binding {
   const binding = getCloudflareContext({ async: false }).env.LUNATV_D1;
   if (!binding) {
     throw new Error(
-      'Cloudflare D1 binding LUNATV_D1 is missing. Bind a database and apply migrations/0001_storage.sql before selecting cloudflare-d1.'
+      'Cloudflare D1 binding is missing. Add a D1 binding named LUNATV_D1 (or DB) in Cloudflare.'
     );
   }
   return binding;
@@ -38,7 +45,7 @@ export class CloudflareD1Storage implements IStorage {
   constructor(private readonly injectedBinding?: CloudflareD1Binding) {}
 
   private get d1(): CloudflareD1Binding {
-    return this.injectedBinding ?? getRuntimeBinding();
+    return withD1Schema(this.injectedBinding ?? getRuntimeBinding());
   }
 
   private async read<T>(username: string, kind: DataKind, key: string) {
@@ -149,6 +156,24 @@ export class CloudflareD1Storage implements IStorage {
     await this.d1
       .prepare('INSERT INTO users (username, password) VALUES (?1, ?2)')
       .bind(username, hashPassword(password))
+      .run();
+  }
+
+  async getUserPassword(username: string): Promise<string | null> {
+    const row = await this.d1
+      .prepare('SELECT password FROM users WHERE username = ?1')
+      .bind(username)
+      .first<{ password: string }>();
+    return row?.password ?? null;
+  }
+
+  async restoreUserPassword(
+    username: string,
+    storedPassword: string
+  ): Promise<void> {
+    await this.d1
+      .prepare('INSERT INTO users (username, password) VALUES (?1, ?2)')
+      .bind(username, storedPassword)
       .run();
   }
 
@@ -294,5 +319,45 @@ export class CloudflareD1Storage implements IStorage {
       this.d1.prepare('DELETE FROM users'),
       this.d1.prepare('DELETE FROM settings'),
     ]);
+  }
+
+  async restoreBackup(backup: StorageBackup): Promise<void> {
+    const d1 = this.d1;
+    const statements = [
+      d1.prepare('DELETE FROM user_data'),
+      d1.prepare('DELETE FROM users'),
+      d1.prepare('DELETE FROM settings'),
+      d1
+        .prepare('INSERT INTO settings (key, value) VALUES (?, ?)')
+        .bind('admin:config', JSON.stringify(backup.adminConfig)),
+    ];
+    for (const [username, user] of Object.entries(backup.userData)) {
+      if (user.password) {
+        statements.push(
+          d1
+            .prepare('INSERT INTO users (username, password) VALUES (?, ?)')
+            .bind(username, user.password)
+        );
+      }
+      const collections = [
+        ['play', user.playRecords ?? {}],
+        ['favorite', user.favorites ?? {}],
+        ['skip', user.skipConfigs ?? {}],
+        ['search', user.searchHistory ? { '': user.searchHistory } : {}],
+      ] as const;
+      for (const [kind, values] of collections) {
+        for (const [key, value] of Object.entries(values)) {
+          statements.push(
+            d1
+              .prepare(
+                'INSERT INTO user_data (username, kind, item_key, value) VALUES (?, ?, ?, ?)'
+              )
+              .bind(username, kind, key, JSON.stringify(value))
+          );
+        }
+      }
+    }
+    // A failed restore rolls back the DELETEs together with every INSERT.
+    await d1.batch(statements);
   }
 }

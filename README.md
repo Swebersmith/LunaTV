@@ -38,7 +38,7 @@
   <img src="public/screenshot3.png" alt="项目截图" style="max-width:600px">
 </details>
 
-### 请不要在 B站、小红书、微信公众号、抖音、今日头条或其他中国大陆社交平台发布视频或文章宣传本项目，不授权任何“科技周刊/月刊”类项目或站点收录本项目。
+### 请不要在 B 站、小红书、微信公众号、抖音、今日头条或其他中国大陆社交平台发布视频或文章宣传本项目，不授权任何“科技周刊/月刊”类项目或站点收录本项目。
 
 ## 🗺 目录
 
@@ -67,7 +67,7 @@
 | 语言      | TypeScript 4                                                                                          |
 | 播放器    | [ArtPlayer](https://github.com/zhw2590582/ArtPlayer) · [HLS.js](https://github.com/video-dev/hls.js/) |
 | 代码质量  | ESLint · Prettier · Jest                                                                              |
-| 部署      | Docker · Cloudflare Workers                                               |
+| 部署      | Docker · Cloudflare Workers                                                                           |
 
 ## 部署
 
@@ -93,14 +93,14 @@ Cloudflare 中的构建与运行配置如下：
 在 Worker 的 **Settings > Variables and Secrets** 中为 Production 配置以下变量：
 
 ```env
-STORAGE_TYPE=cloudflare-d1
 USERNAME=admin
 PASSWORD=replace-with-a-strong-secret
 ```
 
 `PASSWORD` 必须以 Secret 形式保存。`USERNAME` 可以改为自己的管理员账号。
-`STORAGE_TYPE` 在 Cloudflare 控制台保存，优先于旧的构建变量。部署配置保留 Cloudflare 中已有的资源绑定及密钥。
-创建或迁移到其他 Cloudflare 账号时，在控制台添加自己的 `LUNATV_D1` 绑定并执行建表迁移；不要将数据库 ID、账号 ID、密码、Token 或个人域名提交到仓库。
+`LUNATV_D1` 绑定存在时自动使用 D1（也兼容 `DB`），首次访问自动建表，无需执行 SQL 或修改 GitHub 代码。部署配置保留 Cloudflare 中已有的资源绑定及密钥。
+`STORAGE_TYPE` 可不设置或设为 `auto`；明确设置时优先于自动识别和旧的构建变量。创建或迁移到其他 Cloudflare 账号时，只需在控制台配置自己的绑定和站长账号。已有数据需要通过备份恢复或迁移脚本复制。
+如需自动刷新，在 Cloudflare 设置 `CRON_SECRET` 并添加 Cron Trigger 即可，已支持原生定时任务。不要将数据库 ID、账号 ID、密码、Token 或个人域名提交到仓库。
 
 ### zeabur 一键部署
 
@@ -109,6 +109,7 @@ PASSWORD=replace-with-a-strong-secret
 [![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/8MPTQU/deploy)
 
 **优势**：
+
 - ✅ 无需配置，一键启动（自动部署完整环境）
 - ✅ 自动 HTTPS 和全球 CDN 加速
 - ✅ 持久化存储，数据永不丢失
@@ -188,6 +189,7 @@ networks:
 1. 在 [upstash](https://upstash.com/) 注册账号并新建一个 Redis 实例，名称任意。
 2. 复制新数据库的 **HTTPS ENDPOINT 和 TOKEN**
 3. 使用如下 docker compose
+
 ```yml
 services:
   moontv-core:
@@ -213,20 +215,22 @@ Zeabur 是一站式云端部署平台，使用预构建的 Docker 镜像可以�
 **部署步骤：**
 
 1. **添加 KVRocks 服务**（先添加数据库）
+
    - 点击 "Add Service" > "Docker Images"
    - 输入镜像名称：`apache/kvrocks`
    - 配置端口：`6666` (TCP)
    - **记住服务名称**（通常是 `apachekvrocks`）
    - **配置持久化卷（重要）**：
-     * 在服务设置中找到 "Volumes" 部分
-     * 点击 "Add Volume" 添加新卷
-     * Volume ID: `kvrocks-data`（可自定义，仅支持字母、数字、连字符）
-     * Path: `/var/lib/kvrocks/db`
-     * 保存配置
+     - 在服务设置中找到 "Volumes" 部分
+     - 点击 "Add Volume" 添加新卷
+     - Volume ID: `kvrocks-data`（可自定义，仅支持字母、数字、连字符）
+     - Path: `/var/lib/kvrocks/db`
+     - 保存配置
 
    > 💡 **重要提示**：持久化卷路径必须设置为 `/var/lib/kvrocks/db`（KVRocks 数据目录），这样配置文件保留在容器内，数据库文件持久化，重启后数据不会丢失！
 
 2. **添加 LunaTV 服务**
+
    - 点击 "Add Service" > "Docker Images"
    - 输入镜像名称：`ghcr.io/moontechlab/lunatv:latest`
    - 配置端口：`3000` (HTTP)
@@ -255,6 +259,7 @@ Zeabur 是一站式云端部署平台，使用预构建的 Docker 镜像可以�
    ```
 
    **注意**：
+
    - 使用服务名称作为主机名：`redis://apachekvrocks:6666`
    - 如果服务名称不同，请替换为实际名称
    - 两个服务必须在同一个 Project 中
@@ -265,12 +270,12 @@ Zeabur 是一站式云端部署平台，使用预构建的 Docker 镜像可以�
 
 #### 5. 设置访问域名（必须）
 
-   - 在 LunaTV 服务页面，点击 "Networking" 或 "网络" 标签
-   - 点击 "Generate Domain" 生成 Zeabur 提供的免费域名（如 `xxx.zeabur.app`）
-   - 或者绑定自定义域名：
-     * 点击 "Add Domain" 添加你的域名
-     * 按照提示配置 DNS CNAME 记录指向 Zeabur 提供的目标地址
-   - 设置完域名后即可通过域名访问 LunaTV
+- 在 LunaTV 服务页面，点击 "Networking" 或 "网络" 标签
+- 点击 "Generate Domain" 生成 Zeabur 提供的免费域名（如 `xxx.zeabur.app`）
+- 或者绑定自定义域名：
+  - 点击 "Add Domain" 添加你的域名
+  - 按照提示配置 DNS CNAME 记录指向 Zeabur 提供的目标地址
+- 设置完域名后即可通过域名访问 LunaTV
 
 6. **绑定自定义域名（可选）**
    - 在服务设置中点击 "Domains"
@@ -284,6 +289,7 @@ Zeabur 是一站式云端部署平台，使用预构建的 Docker 镜像可以�
 **更新步骤：**
 
 1. **进入服务页面**
+
    - 点击需要更新的服务（LunaTV 或 KVRocks）
 
 2. **重启服务**
@@ -291,6 +297,7 @@ Zeabur 是一站式云端部署平台，使用预构建的 Docker 镜像可以�
    - Zeabur 会自动拉取最新的 `latest` 镜像并重新部署
 
 > 💡 **提示**：
+>
 > - 使用 `latest` 标签时，Restart 会自动拉取最新镜像
 > - 生产环境推荐使用固定版本标签（如 `v5.5.6`）避免意外更新
 
@@ -353,29 +360,29 @@ dockge/komodo 等 docker compose UI 也有自动更新功能
 
 ## 环境变量
 
-| 变量                                | 说明                                         | 可选值                           | 默认值                                                                                                                     |
-| ----------------------------------- | -------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| USERNAME                            | 站长账号           | 任意字符串                       | 无默认，必填字段                                                                                                                     |
-| PASSWORD                            | 站长密码           | 任意字符串                       | 无默认，必填字段                                                                                                                     |
-| SITE_BASE                           | 站点 url              |       形如 https://example.com                  | 空                                                                                                                     |
-| NEXT_PUBLIC_SITE_NAME               | 站点名称                                     | 任意字符串                       | MoonTV                                                                                                                     |
-| ANNOUNCEMENT                        | 站点公告                                     | 任意字符串                       | 本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。 |
-| NEXT_PUBLIC_STORAGE_TYPE            | 播放记录/收藏的存储方式                      | redis、kvrocks、upstash、cloudflare-kv、cloudflare-d1 | 默认 localstorage；Cloudflare 推荐使用 cloudflare-d1，需先配置绑定和建表                                                                        |
-| STORAGE_TYPE                        | 私有运行时存储选择                          | 与上行相同                         | 优先于 NEXT_PUBLIC_STORAGE_TYPE；Cloudflare 推荐在控制台配置 |
-| LUNATV_KV                           | Cloudflare Workers KV 资源绑定               | KV binding 名称                    | 空；使用 cloudflare-kv 时必须绑定到 KV 命名空间                                                                              |
-| LUNATV_D1                           | Cloudflare D1 数据库绑定                     | D1 binding 名称                    | 使用 cloudflare-d1 时必须绑定并执行 migrations |
-| CRON_SECRET                         | 定时刷新接口密钥                             | Worker Secret                      | 未设置时关闭 /api/cron；调用方通过 Bearer 认证 |
-| KVROCKS_URL                           | kvrocks 连接 url                               | 连接 url                         | 空                                                                                                                         |
-| REDIS_URL                           | redis 连接 url                               | 连接 url                         | 空                                                                                                                         |
-| UPSTASH_URL                         | upstash redis 连接 url                       | 连接 url                         | 空                                                                                                                         |
-| UPSTASH_TOKEN                       | upstash redis 连接 token                     | 连接 token                       | 空                                                                                                                         |
-| NEXT_PUBLIC_SEARCH_MAX_PAGE         | 搜索接口可拉取的最大页数                     | 1-50                             | 5                                                                                                                          |
-| NEXT_PUBLIC_DOUBAN_PROXY_TYPE       | 豆瓣数据源请求方式                           | 见下方                           | direct                                                                                                                     |
-| NEXT_PUBLIC_DOUBAN_PROXY            | 自定义豆瓣数据代理 URL                       | url prefix                       | (空)                                                                                                                       |
-| NEXT_PUBLIC_DOUBAN_IMAGE_PROXY_TYPE | 豆瓣图片代理类型                             | 见下方                           | direct                                                                                                                     |
-| NEXT_PUBLIC_DOUBAN_IMAGE_PROXY      | 自定义豆瓣图片代理 URL                       | url prefix                       | (空)                                                                                                                       |
-| NEXT_PUBLIC_DISABLE_YELLOW_FILTER   | 关闭色情内容过滤                             | true/false                       | false                                                                                                                      |
-| NEXT_PUBLIC_FLUID_SEARCH | 是否开启搜索接口流式输出 | true/ false | true |
+| 变量                                | 说明                           | 可选值                                                | 默认值                                                                                                                     |
+| ----------------------------------- | ------------------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| USERNAME                            | 站长账号                       | 任意字符串                                            | 无默认，必填字段                                                                                                           |
+| PASSWORD                            | 站长密码                       | 任意字符串                                            | 无默认，必填字段                                                                                                           |
+| SITE_BASE                           | 站点 url                       | 形如 https://example.com                              | 空                                                                                                                         |
+| NEXT_PUBLIC_SITE_NAME               | 站点名称                       | 任意字符串                                            | MoonTV                                                                                                                     |
+| ANNOUNCEMENT                        | 站点公告                       | 任意字符串                                            | 本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。 |
+| NEXT_PUBLIC_STORAGE_TYPE            | 播放记录/收藏的存储方式        | redis、kvrocks、upstash、cloudflare-kv、cloudflare-d1 | 默认 localstorage；Cloudflare 推荐使用 cloudflare-d1，仅需在 Cloudflare 配置绑定，首次访问自动建表                         |
+| STORAGE_TYPE                        | 私有运行时存储选择             | 与上行相同                                            | 可选；私有选择优先，未设置或 auto 时按 Cloudflare 绑定自动识别                                                             |
+| LUNATV_KV                           | Cloudflare Workers KV 资源绑定 | KV binding 名称                                       | 空；使用 cloudflare-kv 时必须绑定到 KV 命名空间                                                                            |
+| LUNATV_D1                           | Cloudflare D1 数据库绑定       | D1 binding 名称                                       | 在 Cloudflare 中绑定即可，也兼容 DB 名称，自动建表                                                                         |
+| CRON_SECRET                         | 定时刷新接口密钥               | Worker Secret                                         | 未设置时关闭 /api/cron；调用方通过 Bearer 认证                                                                             |
+| KVROCKS_URL                         | kvrocks 连接 url               | 连接 url                                              | 空                                                                                                                         |
+| REDIS_URL                           | redis 连接 url                 | 连接 url                                              | 空                                                                                                                         |
+| UPSTASH_URL                         | upstash redis 连接 url         | 连接 url                                              | 空                                                                                                                         |
+| UPSTASH_TOKEN                       | upstash redis 连接 token       | 连接 token                                            | 空                                                                                                                         |
+| NEXT_PUBLIC_SEARCH_MAX_PAGE         | 搜索接口可拉取的最大页数       | 1-50                                                  | 5                                                                                                                          |
+| NEXT_PUBLIC_DOUBAN_PROXY_TYPE       | 豆瓣数据源请求方式             | 见下方                                                | direct                                                                                                                     |
+| NEXT_PUBLIC_DOUBAN_PROXY            | 自定义豆瓣数据代理 URL         | url prefix                                            | (空)                                                                                                                       |
+| NEXT_PUBLIC_DOUBAN_IMAGE_PROXY_TYPE | 豆瓣图片代理类型               | 见下方                                                | direct                                                                                                                     |
+| NEXT_PUBLIC_DOUBAN_IMAGE_PROXY      | 自定义豆瓣图片代理 URL         | url prefix                                            | (空)                                                                                                                       |
+| NEXT_PUBLIC_DISABLE_YELLOW_FILTER   | 关闭色情内容过滤               | true/false                                            | false                                                                                                                      |
+| NEXT_PUBLIC_FLUID_SEARCH            | 是否开启搜索接口流式输出       | true/ false                                           | true                                                                                                                       |
 
 NEXT_PUBLIC_DOUBAN_PROXY_TYPE 选项解释：
 

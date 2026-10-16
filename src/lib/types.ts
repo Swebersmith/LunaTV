@@ -53,6 +53,9 @@ export interface IStorage {
   checkUserExist(userName: string): Promise<boolean>;
   // 修改用户密码
   changePassword(userName: string, newPassword: string): Promise<void>;
+  // Backup-only access. Restore preserves hashes instead of hashing them twice.
+  getUserPassword(userName: string): Promise<string | null>;
+  restoreUserPassword(userName: string, storedPassword: string): Promise<void>;
   // 删除用户（包括密码、搜索历史、播放记录、收藏夹）
   deleteUser(userName: string): Promise<void>;
 
@@ -91,6 +94,20 @@ export interface IStorage {
 
   // 数据清理相关
   clearAllData(): Promise<void>;
+  restoreBackup?(backup: StorageBackup): Promise<void>;
+}
+
+export interface UserBackup {
+  password?: string | null;
+  playRecords?: Record<string, PlayRecord>;
+  favorites?: Record<string, Favorite>;
+  searchHistory?: string[];
+  skipConfigs?: Record<string, SkipConfig>;
+}
+
+export interface StorageBackup {
+  adminConfig: AdminConfig;
+  userData: Record<string, UserBackup>;
 }
 
 // 搜索结果数据结构

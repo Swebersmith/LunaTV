@@ -6,7 +6,13 @@ import { CloudflareKVStorage } from './cloudflare-kv.db';
 import { KvrocksStorage } from './kvrocks.db';
 import { RedisStorage } from './redis.db';
 import { getStorageType } from './storage-type';
-import { Favorite, IStorage, PlayRecord, SkipConfig } from './types';
+import {
+  Favorite,
+  IStorage,
+  PlayRecord,
+  SkipConfig,
+  StorageBackup,
+} from './types';
 import { UpstashRedisStorage } from './upstash.db';
 
 // 创建存储实例
@@ -179,6 +185,39 @@ export class DbManager {
 
   async verifyUser(userName: string, password: string): Promise<boolean> {
     return this.storage.verifyUser(userName, password);
+  }
+
+  async getUserPassword(userName: string): Promise<string | null> {
+    return this.storage.getUserPassword(userName);
+  }
+
+  async restoreBackup(backup: StorageBackup): Promise<void> {
+    const storage = this.storage;
+    if (storage.restoreBackup) return storage.restoreBackup(backup);
+    await storage.clearAllData();
+    await storage.setAdminConfig(backup.adminConfig);
+    for (const [username, user] of Object.entries(backup.userData)) {
+      if (user.password)
+        await storage.restoreUserPassword(username, user.password);
+      for (const [key, record] of Object.entries(user.playRecords ?? {})) {
+        await storage.setPlayRecord(username, key, record);
+      }
+      for (const [key, favorite] of Object.entries(user.favorites ?? {})) {
+        await storage.setFavorite(username, key, favorite);
+      }
+      for (const keyword of [...(user.searchHistory ?? [])].reverse()) {
+        await storage.addSearchHistory(username, keyword);
+      }
+      for (const [key, config] of Object.entries(user.skipConfigs ?? {})) {
+        const separator = key.indexOf('+');
+        await storage.setSkipConfig(
+          username,
+          key.slice(0, separator),
+          key.slice(separator + 1),
+          config
+        );
+      }
+    }
   }
 
   // 检查用户是否已存在

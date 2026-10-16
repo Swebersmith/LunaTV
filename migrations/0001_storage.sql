@@ -1,4 +1,5 @@
--- Run once before selecting cloudflare-d1. No request-time schema writes.
+-- Optional manual initialization. The application also creates missing tables
+-- once on first database access. Existing databases need no schema writes.
 CREATE TABLE IF NOT EXISTS users (
   username TEXT PRIMARY KEY NOT NULL,
   password TEXT NOT NULL

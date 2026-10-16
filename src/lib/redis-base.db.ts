@@ -252,7 +252,15 @@ export abstract class BaseRedisStorage implements IStorage {
   }
 
   async registerUser(userName: string, password: string): Promise<void> {
-    const hashed = hashPassword(password);
+    await this.restoreUserPassword(userName, hashPassword(password));
+  }
+
+  async getUserPassword(userName: string): Promise<string | null> {
+    const stored = await this.withRetry(() => this.client.get(this.userPwdKey(userName)));
+    return stored === null ? null : ensureString(stored);
+  }
+
+  async restoreUserPassword(userName: string, hashed: string): Promise<void> {
     await this.withRetry(() => this.client.set(this.userPwdKey(userName), hashed));
     // 维护用户集合
     await this.withRetry(() => this.client.sAdd(this.usersSetKey(), userName));

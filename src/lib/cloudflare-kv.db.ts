@@ -204,7 +204,18 @@ export class CloudflareKVStorage implements IStorage {
   }
 
   async registerUser(userName: string, password: string): Promise<void> {
-    await this.write(this.passwordKey(userName), hashPassword(password));
+    await this.restoreUserPassword(userName, hashPassword(password));
+  }
+
+  getUserPassword(userName: string): Promise<string | null> {
+    return this.read<string>(this.passwordKey(userName));
+  }
+
+  async restoreUserPassword(
+    userName: string,
+    storedPassword: string
+  ): Promise<void> {
+    await this.write(this.passwordKey(userName), storedPassword);
 
     const users = (await this.read<string[]>(this.usersKey())) ?? [];
     if (!users.includes(userName)) {

@@ -18,43 +18,36 @@
 
 官方说明：[KV 额度](https://developers.cloudflare.com/kv/platform/limits/)、[D1 计费与额度](https://developers.cloudflare.com/d1/platform/pricing/)、[D1 平台限制](https://developers.cloudflare.com/d1/platform/limits/)。
 
-## 启用 D1
+## 启用 D1：仅需 Cloudflare 控制台操作
 
-本仓库支持 D1 和 KV 两种存储。数据库 ID、账号 ID 和域名都保留在 Cloudflare 私有配置中，不需要提交到仓库。`wrangler.jsonc` 通过 Cloudflare 的 `keep_bindings` 上传元数据保留已配置的 D1、KV、运行变量和密钥；首次部署前需要在控制台建立绑定。代码更新不会自动创建数据库或复制已有数据。
+仓库提供通用 Workers + D1 代码。数据库 ID、账号 ID、域名和密码都保留在 Cloudflare 中，无需手动修改 GitHub 文件。`wrangler.jsonc` 使用 Cloudflare 的 `keep_bindings` 上传元数据保留控制台配置的 D1、KV、运行变量和密钥，之后的自动部署也会保留这些设置。
 
-1. 安装依赖并登录正确的 Cloudflare 账号：
+1. 在 Cloudflare → **Storage & databases → D1** 创建数据库，名称可自定。
+2. 打开 **Workers & Pages → 你的 Worker → Bindings → Add binding → D1 database**，变量名填 **`LUNATV_D1`**，选择数据库并部署。也兼容常见的 `DB` 名称，两者同时存在时优先使用 `LUNATV_D1`。
+3. 在 **Settings → Variables and Secrets** 设置站长账号 `USERNAME`，以及 Secret 类型的 `PASSWORD`。原来已有时继续使用即可。
+4. 打开网站。程序自动识别 D1，首次访问自动创建缺失的表，不需要执行 SQL、填写数据库 ID 或修改仓库。首次部署尚无 Worker 时，先从仓库部署，再添加上述绑定。
 
-   ```sh
-   pnpm install --frozen-lockfile
-   pnpm exec wrangler login
-   pnpm exec wrangler d1 create lunatv
-   ```
+构建命令为 `pnpm cf:build`，部署命令为 `pnpm exec wrangler deploy --keep-vars`。表结构也保留在 `migrations/0001_storage.sql`，供手动初始化或离线迁移使用。自动建表只在出现应用表缺失时执行；正常读取和冷启动不重复执行建表。
 
-2. 在 Cloudflare 控制台打开 Worker → Bindings → Add binding → D1 database，将变量名设为 `LUNATV_D1`，选择新建的数据库。真实数据库 ID 保留在 Cloudflare 中，不写入公开配置文件。
+`STORAGE_TYPE` 默认可以不设置；`auto` 也表示自动识别。识别到 D1 时会覆盖历史 `NEXT_PUBLIC_STORAGE_TYPE=cloudflare-kv` 构建变量。若曾手动设置私有 `STORAGE_TYPE=cloudflare-kv`，请在 Cloudflare 将它删除或改成 `auto` / `cloudflare-d1`；明确的私有选择仍优先，以便回退和兼容其他部署方式。浏览器只接收存储类型，不接收数据库 ID 或凭据。
 
-3. 在切换存储类型之前创建表：
+切换到新建的空数据库不会自动复制旧数据。已有 KV 用户应先按下一节迁移，再绑定目标 D1；也可以先在管理面板导出加密备份，切换后导入。D1 支持账号与密码、播放记录、收藏（包括直播收藏）、搜索历史、片头片尾跳过设置、站点与视频源/直播源配置，以及加密备份导出和恢复。恢复保留已有密码哈希，失败时 D1 事务会回滚，避免先清空再导入失败造成数据丢失。
 
-   ```sh
-   pnpm exec wrangler d1 execute lunatv --remote --file migrations/0001_storage.sql
-   ```
+## 定时刷新（可选）
 
-4. 如需保留已有账户、配置、收藏和进度，先执行下一节的迁移。迁移期间暂停网站访问和定时任务，避免复制后旧 KV 继续收到更新；在完成校验之前不要切换到 D1。
+在 Cloudflare 中添加 Secret **`CRON_SECRET`**，然后在 Worker 的 **Settings → Triggers → Cron Triggers** 添加计划，例如每天一次 `0 0 * * *`（UTC，北京时间 08:00）。仓库已提供原生 `scheduled` 处理器，不需要修改 GitHub 或另外创建 Worker。没有需要时不配置触发器，网站不会自行定时刷新。
 
-5. 在 Worker → Settings → Variables and Secrets 中新增私有运行变量 `STORAGE_TYPE=cloudflare-d1`（可保存为 Secret），保留 `USERNAME`、`PASSWORD` 等原有配置，再重新部署。应用优先读取这个私有运行变量；旧的 `NEXT_PUBLIC_STORAGE_TYPE` 仅作为兼容回退，即使历史构建变量仍为 KV，也不会覆盖私有选择。浏览器只接收存储类型，不接收数据库 ID 或凭据。
-
-6. 验证站长和普通用户登录、播放进度、收藏、搜索历史及跳过片头片尾设置。在 D1 的 Metrics → Row Metrics 核对用量。确认无误后可以移除 `LUNATV_KV` 绑定；先保留旧命名空间作为回退副本。
-
-如需定时刷新，设置 Worker 的 `CRON_SECRET` secret，调用方发送相同的 Bearer 密钥。建议每天一次；不需要刷新时无需配置。此 HTTP 接口不是 Cloudflare 的原生 Cron Trigger，原生触发器需要另外的 `scheduled` 处理器。
+外部定时服务也可以调用 `/api/cron`，发送 `Authorization: Bearer <CRON_SECRET>`。不要把密钥放进 URL。原生触发器和 HTTP 调用执行相同的刷新任务；直播频道数量不变时不重复保存配置。
 
 ## 从当前 KV 无损复制到 D1
 
-迁移脚本在本机运行，通过 Cloudflare 官方 API 读取 KV 和写入 D1，不向 Worker 添加 API Token，也不产生任何 KV 写入或删除。与仅导出页面数据不同，它直接保留已有密码哈希。迁移只识别 `admin:config` 和 `u:*:pwd/pr/fav/sh/skip`，忽略缓存和无关条目。
+迁移脚本在本机运行，通过 Cloudflare 官方 API 读取 KV 和写入 D1，不向 Worker 添加 API Token，也不产生任何 KV 写入或删除。脚本和管理面板的备份恢复都会保留已有密码哈希。迁移只识别 `admin:config` 和 `u:*:pwd/pr/fav/sh/skip`，忽略缓存和无关条目。
 
 准备只作用于目标账号的临时 API Token，权限为 **Workers KV Storage Read** 和 **D1 Edit**。在本地终端设置以下环境变量，禁止把 Token 写入代码或提交到仓库：
 
 - `CLOUDFLARE_API_TOKEN`：临时迁移 Token。
 - `CLOUDFLARE_ACCOUNT_ID`：当前账号 ID。
-- `CLOUDFLARE_KV_NAMESPACE_ID`：当前 `LUNATV_KV` 绑定 ID，可在 `wrangler.jsonc` 中找到。
+- `CLOUDFLARE_KV_NAMESPACE_ID`：当前 `LUNATV_KV` 绑定 ID，在 Cloudflare 控制台查看。
 - `CLOUDFLARE_D1_DATABASE_ID`：新建 D1 的 ID。
 
 先检查数据（默认只读，会读取 KV，并检查 D1 表已创建）：
