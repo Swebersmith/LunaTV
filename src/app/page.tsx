@@ -23,6 +23,7 @@ import { DoubanItem } from '@/lib/types';
 import CapsuleSwitch from '@/components/CapsuleSwitch';
 import ContinueWatching from '@/components/ContinueWatching';
 import { SquadHero } from '@/components/CrayonTheme';
+import NavigationLink from '@/components/NavigationLink';
 import PageLayout from '@/components/PageLayout';
 import ScrollableRow from '@/components/ScrollableRow';
 import { useSite } from '@/components/SiteProvider';
@@ -250,13 +251,13 @@ function HomeClient() {
                   <h2 className='text-xl font-bold text-gray-800 dark:text-gray-200'>
                     热门电影
                   </h2>
-                  <Link
+                  <NavigationLink
                     href='/douban?type=movie'
                     className='flex items-center text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                   >
                     查看更多
                     <ChevronRight className='w-4 h-4 ml-1' />
-                  </Link>
+                  </NavigationLink>
                 </div>
                 <ScrollableRow>
                   {loading
@@ -298,13 +299,13 @@ function HomeClient() {
                   <h2 className='text-xl font-bold text-gray-800 dark:text-gray-200'>
                     热门剧集
                   </h2>
-                  <Link
+                  <NavigationLink
                     href='/douban?type=tv'
                     className='flex items-center text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                   >
                     查看更多
                     <ChevronRight className='w-4 h-4 ml-1' />
-                  </Link>
+                  </NavigationLink>
                 </div>
                 <ScrollableRow>
                   {loading
@@ -345,13 +346,13 @@ function HomeClient() {
                   <h2 className='text-xl font-bold text-gray-800 dark:text-gray-200'>
                     新番放送
                   </h2>
-                  <Link
+                  <NavigationLink
                     href='/douban?type=anime'
                     className='flex items-center text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                   >
                     查看更多
                     <ChevronRight className='w-4 h-4 ml-1' />
-                  </Link>
+                  </NavigationLink>
                 </div>
                 <ScrollableRow>
                   {loading
@@ -420,13 +421,13 @@ function HomeClient() {
                   <h2 className='text-xl font-bold text-gray-800 dark:text-gray-200'>
                     热门综艺
                   </h2>
-                  <Link
+                  <NavigationLink
                     href='/douban?type=show'
                     className='flex items-center text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                   >
                     查看更多
                     <ChevronRight className='w-4 h-4 ml-1' />
-                  </Link>
+                  </NavigationLink>
                 </div>
                 <ScrollableRow>
                   {loading

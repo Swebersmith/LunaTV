@@ -2,6 +2,7 @@ import { BackButton } from './BackButton';
 import { CrayonFooter } from './CrayonTheme';
 import MobileBottomNav from './MobileBottomNav';
 import MobileHeader from './MobileHeader';
+import { NavigationProgress } from './NavigationLink';
 import Sidebar from './Sidebar';
 import { ThemeToggle } from './ThemeToggle';
 import { UserMenu } from './UserMenu';
@@ -14,6 +15,7 @@ interface PageLayoutProps {
 const PageLayout = ({ children, activePath = '/' }: PageLayoutProps) => {
   return (
     <div className='crayon-shell w-full min-h-screen'>
+      <NavigationProgress />
       {/* 移动端头部 */}
       <MobileHeader showBackButton={['/play', '/live'].includes(activePath)} />
 

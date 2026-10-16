@@ -1,5 +1,7 @@
 'use client';
 
+import { fetchClientJson } from './client-request';
+
 export interface BangumiCalendarData {
   weekday: {
     en: string;
@@ -22,12 +24,9 @@ export interface BangumiCalendarData {
   }[];
 }
 
-export async function GetBangumiCalendarData(): Promise<BangumiCalendarData[]> {
-  const response = await fetch('/api/bangumi/calendar');
-  if (!response.ok) {
-    throw new Error(`获取番剧日历失败: HTTP ${response.status}`);
-  }
-  const data = await response.json();
+export async function GetBangumiCalendarData(signal?: AbortSignal): Promise<BangumiCalendarData[]> {
+  const data = await fetchClientJson<BangumiCalendarData[]>('/api/bangumi/calendar', signal);
+  if (!Array.isArray(data)) throw new Error('番剧日历暂时无法加载，请稍后重试。');
   const filteredData = data.map((item: BangumiCalendarData) => ({
     ...item,
     items: item.items.filter(bangumiItem => bangumiItem.images)
