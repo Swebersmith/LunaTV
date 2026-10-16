@@ -1,7 +1,9 @@
 import { Metadata } from 'next';
 
+import { DEFAULT_SITE_NAME } from '@/lib/branding';
+
 export const metadata: Metadata = {
-  title: '安全警告 - MoonTV',
+  title: `安全警告 - ${DEFAULT_SITE_NAME}`,
   description: '站点安全配置警告',
 };
 

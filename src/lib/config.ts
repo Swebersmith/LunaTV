@@ -3,6 +3,7 @@
 import { db } from '@/lib/db';
 
 import { AdminConfig } from './admin.types';
+import { DEFAULT_SITE_NAME } from './branding';
 
 export interface ApiSite {
   key: string;
@@ -201,7 +202,7 @@ async function getInitConfig(configFile: string, subConfig: {
     ConfigFile: configFile,
     ConfigSubscribtion: subConfig,
     SiteConfig: {
-      SiteName: process.env.NEXT_PUBLIC_SITE_NAME || 'MoonTV',
+      SiteName: process.env.NEXT_PUBLIC_SITE_NAME || DEFAULT_SITE_NAME,
       Announcement:
         process.env.ANNOUNCEMENT ||
         '本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。',

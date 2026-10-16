@@ -3,6 +3,7 @@
 import Link from 'next/link';
 
 import { BackButton } from './BackButton';
+import { BrandLogo } from './BrandLogo';
 import { useSite } from './SiteProvider';
 import { ThemeToggle } from './ThemeToggle';
 import { UserMenu } from './UserMenu';
@@ -48,12 +49,13 @@ const MobileHeader = ({ showBackButton = false }: MobileHeaderProps) => {
       </div>
 
       {/* 中间：Logo（绝对居中） */}
-      <div className='absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2'>
+      <div className='absolute top-1/2 left-1/2 max-w-[calc(100%-11rem)] -translate-x-1/2 -translate-y-1/2'>
         <Link
           href='/'
-          className='text-2xl font-bold text-green-600 tracking-tight hover:opacity-80 transition-opacity'
+          className='flex items-center gap-1.5 text-sm font-bold tracking-tight text-red-600 hover:opacity-80 transition-opacity dark:text-amber-300 sm:text-base'
         >
-          {siteName}
+          <BrandLogo size={24} />
+          <span className='truncate'>{siteName}</span>
         </Link>
       </div>
     </header>

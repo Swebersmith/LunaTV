@@ -5,6 +5,8 @@ import { Inter } from 'next/font/google';
 
 import './globals.css';
 
+import { DEFAULT_SITE_NAME } from '@/lib/branding';
+import branding from '@/lib/branding.json';
 import { getConfig } from '@/lib/config';
 import { getStorageType } from '@/lib/storage-type';
 
@@ -19,20 +21,27 @@ export const dynamic = 'force-dynamic';
 export async function generateMetadata(): Promise<Metadata> {
   const storageType = getStorageType();
   const config = await getConfig();
-  let siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'MoonTV';
+  let siteName = process.env.NEXT_PUBLIC_SITE_NAME || DEFAULT_SITE_NAME;
   if (storageType !== 'localstorage') {
     siteName = config.SiteConfig.SiteName;
   }
 
   return {
     title: siteName,
-    description: '影视聚合',
-    manifest: '/manifest.json',
+    description: branding.description,
+    manifest: `/manifest.webmanifest?v=${branding.assetVersion}`,
+    applicationName: siteName,
+    appleWebApp: { capable: true, title: siteName, statusBarStyle: 'default' },
+    icons: {
+      icon: `/favicon.ico?v=${branding.assetVersion}`,
+      apple: `/icons/icon-192x192.png?v=${branding.assetVersion}`,
+    },
   };
 }
 
 export const viewport: Viewport = {
   viewportFit: 'cover',
+  themeColor: branding.themeColor,
 };
 
 export default async function RootLayout({
@@ -42,7 +51,7 @@ export default async function RootLayout({
 }) {
   const storageType = getStorageType();
 
-  let siteName = process.env.NEXT_PUBLIC_SITE_NAME || 'MoonTV';
+  let siteName = process.env.NEXT_PUBLIC_SITE_NAME || DEFAULT_SITE_NAME;
   let announcement =
     process.env.ANNOUNCEMENT ||
     '本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。';
@@ -103,7 +112,6 @@ export default async function RootLayout({
           name='viewport'
           content='width=device-width, initial-scale=1.0, viewport-fit=cover'
         />
-        <link rel='apple-touch-icon' href='/icons/icon-192x192.png' />
         {/* OpenNext may serialize next-themes' inline script with esbuild's
             __name helper but omit the helper itself. */}
         <script

@@ -14,6 +14,7 @@ import {
   useState,
 } from 'react';
 
+import { BrandLogo } from './BrandLogo';
 import { useSite } from './SiteProvider';
 
 interface SidebarContextType {
@@ -26,15 +27,15 @@ const SidebarContext = createContext<SidebarContextType>({
 
 export const useSidebar = () => useContext(SidebarContext);
 
-// 可替换为你自己的 logo 图片
 const Logo = () => {
   const { siteName } = useSite();
   return (
     <Link
       href='/'
-      className='flex items-center justify-center h-16 select-none hover:opacity-80 transition-opacity duration-200'
+      className='flex h-16 items-center justify-center gap-2 select-none hover:opacity-80 transition-opacity duration-200'
     >
-      <span className='text-2xl font-bold text-green-600 tracking-tight'>
+      <BrandLogo size={36} />
+      <span className='whitespace-nowrap text-lg font-bold tracking-tight text-red-600 dark:text-amber-300'>
         {siteName}
       </span>
     </Link>

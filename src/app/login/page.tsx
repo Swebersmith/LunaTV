@@ -6,9 +6,11 @@ import { AlertCircle, CheckCircle } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 
+import { BRAND_TAGLINE } from '@/lib/branding';
 import { CURRENT_VERSION } from '@/lib/version';
 import { checkForUpdates, UpdateStatus } from '@/lib/version_check';
 
+import { BrandLogo } from '@/components/BrandLogo';
 import { useSite } from '@/components/SiteProvider';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
@@ -122,14 +124,20 @@ function LoginPageClient() {
 
 
   return (
-    <div className='relative min-h-screen flex items-center justify-center px-4 overflow-hidden'>
+    <div className='relative min-h-screen flex items-center justify-center overflow-hidden bg-gradient-to-br from-amber-50 via-orange-50/60 to-red-50 px-4 dark:from-zinc-950 dark:via-zinc-900 dark:to-stone-950'>
       <div className='absolute top-4 right-4'>
         <ThemeToggle />
       </div>
       <div className='relative z-10 w-full max-w-md rounded-3xl bg-gradient-to-b from-white/90 via-white/70 to-white/40 dark:from-zinc-900/90 dark:via-zinc-900/70 dark:to-zinc-900/40 backdrop-blur-xl shadow-2xl p-10 dark:border dark:border-zinc-800'>
-        <h1 className='text-green-600 tracking-tight text-center text-3xl font-extrabold mb-8 bg-clip-text drop-shadow-sm'>
-          {siteName}
-        </h1>
+        <div className='mb-8 flex flex-col items-center text-center'>
+          <BrandLogo size={104} priority className='mb-4 drop-shadow-sm' />
+          <h1 className='text-3xl font-extrabold tracking-tight text-red-600 dark:text-amber-300'>
+            {siteName}
+          </h1>
+          <p className='mt-3 text-sm leading-relaxed text-stone-500 dark:text-stone-400'>
+            {BRAND_TAGLINE}
+          </p>
+        </div>
         <form onSubmit={handleSubmit} className='space-y-8'>
           {shouldAskUsername && (
             <div>
@@ -173,7 +181,7 @@ function LoginPageClient() {
             disabled={
               !password || loading || (shouldAskUsername && !username)
             }
-            className='inline-flex w-full justify-center rounded-lg bg-green-600 py-3 text-base font-semibold text-white shadow-lg transition-all duration-200 hover:from-green-600 hover:to-blue-600 disabled:cursor-not-allowed disabled:opacity-50'
+            className='inline-flex w-full justify-center rounded-lg bg-red-600 py-3 text-base font-semibold text-white shadow-lg shadow-red-500/15 transition-all duration-200 hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50'
           >
             {loading ? '登录中...' : '登录'}
           </button>
