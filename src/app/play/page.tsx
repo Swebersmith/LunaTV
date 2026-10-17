@@ -24,7 +24,11 @@ import {
 } from '@/lib/db.client';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
-import { attachVodHls } from '@/lib/vod-playback';
+import {
+  attachVodHls,
+  vodContentTime,
+  vodSourceTime,
+} from '@/lib/vod-playback';
 
 import EpisodeSelector from '@/components/EpisodeSelector';
 import PageLayout from '@/components/PageLayout';
@@ -35,6 +39,16 @@ interface WakeLockSentinel {
   release(): Promise<void>;
   addEventListener(type: 'release', listener: () => void): void;
   removeEventListener(type: 'release', listener: () => void): void;
+}
+
+// Persist positions on the source timeline, so old history and ad-toggle
+// changes resume the same program frame after the filtered timeline shrinks.
+function sourceTime(player: Artplayer | null, time: number) {
+  return player?.video ? vodSourceTime(player.video, time) : time;
+}
+
+function contentTime(player: Artplayer | null, time: number) {
+  return player?.video ? vodContentTime(player.video, time) : time;
 }
 
 function PlayPageClient() {
@@ -523,7 +537,10 @@ function PlayPageClient() {
               ? '设置片头时间'
               : `${formatTime(skipConfigRef.current.intro_time)}`,
           onClick: function () {
-            const currentTime = artPlayerRef.current?.currentTime || 0;
+            const currentTime = sourceTime(
+              artPlayerRef.current,
+              artPlayerRef.current?.currentTime || 0
+            );
             if (currentTime > 0) {
               const newConfig = {
                 ...skipConfigRef.current,
@@ -545,8 +562,14 @@ function PlayPageClient() {
           onClick: function () {
             const outroTime =
               -(
-                artPlayerRef.current?.duration -
-                artPlayerRef.current?.currentTime
+                sourceTime(
+                  artPlayerRef.current,
+                  artPlayerRef.current?.duration || 0
+                ) -
+                sourceTime(
+                  artPlayerRef.current,
+                  artPlayerRef.current?.currentTime || 0
+                )
               ) || 0;
             if (outroTime < 0) {
               const newConfig = {
@@ -807,7 +830,10 @@ function PlayPageClient() {
       setIsVideoLoading(true);
 
       // 记录当前播放进度（仅在同一集数切换时恢复）
-      const currentPlayTime = artPlayerRef.current?.currentTime || 0;
+      const currentPlayTime = sourceTime(
+        artPlayerRef.current,
+        artPlayerRef.current?.currentTime || 0
+      );
       console.log('换源前当前播放时间:', currentPlayTime);
 
       // 清除前一个历史记录
@@ -1033,11 +1059,11 @@ function PlayPageClient() {
     }
 
     const player = artPlayerRef.current;
-    const currentTime = player.currentTime || 0;
-    const duration = player.duration || 0;
+    const currentTime = sourceTime(player, player.currentTime || 0);
+    const duration = sourceTime(player, player.duration || 0);
 
     // 视频尚未开始或时长无效时不保存。
-    if (currentTime < 1 || !duration) {
+    if ((player.currentTime || 0) < 1 || !(player.duration || 0)) {
       return;
     }
 
@@ -1337,7 +1363,10 @@ function PlayPageClient() {
               } catch {
                 // The current session can still toggle without local storage.
               }
-              resumeTimeRef.current = artPlayerRef.current?.currentTime || 0;
+              resumeTimeRef.current = sourceTime(
+                artPlayerRef.current,
+                artPlayerRef.current?.currentTime || 0
+              );
               cleanupPlayer();
               blockAdEnabledRef.current = enabled;
               setBlockAdEnabled(enabled);
@@ -1377,7 +1406,10 @@ function PlayPageClient() {
                 ? '设置片头时间'
                 : `${formatTime(skipConfigRef.current.intro_time)}`,
             onClick: function () {
-              const currentTime = artPlayerRef.current?.currentTime || 0;
+              const currentTime = sourceTime(
+                artPlayerRef.current,
+                artPlayerRef.current?.currentTime || 0
+              );
               if (currentTime > 0) {
                 const newConfig = {
                   ...skipConfigRef.current,
@@ -1399,8 +1431,14 @@ function PlayPageClient() {
             onClick: function () {
               const outroTime =
                 -(
-                  artPlayerRef.current?.duration -
-                  artPlayerRef.current?.currentTime
+                  sourceTime(
+                    artPlayerRef.current,
+                    artPlayerRef.current?.duration || 0
+                  ) -
+                  sourceTime(
+                    artPlayerRef.current,
+                    artPlayerRef.current?.currentTime || 0
+                  )
                 ) || 0;
               if (outroTime < 0) {
                 const newConfig = {
@@ -1469,7 +1507,10 @@ function PlayPageClient() {
         if (resumeTimeRef.current && resumeTimeRef.current > 0) {
           try {
             const duration = artPlayerRef.current.duration || 0;
-            let target = resumeTimeRef.current;
+            let target = contentTime(
+              artPlayerRef.current,
+              resumeTimeRef.current
+            );
             if (duration && target >= duration - 2) {
               target = Math.max(0, duration - 5);
             }
@@ -1506,8 +1547,14 @@ function PlayPageClient() {
       artPlayerRef.current.on('video:timeupdate', () => {
         if (!skipConfigRef.current.enable) return;
 
-        const currentTime = artPlayerRef.current.currentTime || 0;
-        const duration = artPlayerRef.current.duration || 0;
+        const currentTime = sourceTime(
+          artPlayerRef.current,
+          artPlayerRef.current.currentTime || 0
+        );
+        const duration = sourceTime(
+          artPlayerRef.current,
+          artPlayerRef.current.duration || 0
+        );
         const now = Date.now();
 
         // 限制跳过检查频率为1.5秒一次
@@ -1519,7 +1566,10 @@ function PlayPageClient() {
           skipConfigRef.current.intro_time > 0 &&
           currentTime < skipConfigRef.current.intro_time
         ) {
-          artPlayerRef.current.currentTime = skipConfigRef.current.intro_time;
+          artPlayerRef.current.currentTime = contentTime(
+            artPlayerRef.current,
+            skipConfigRef.current.intro_time
+          );
           artPlayerRef.current.notice.show = `已跳过片头 (${formatTime(
             skipConfigRef.current.intro_time
           )})`;
@@ -1529,8 +1579,7 @@ function PlayPageClient() {
         if (
           skipConfigRef.current.outro_time < 0 &&
           duration > 0 &&
-          currentTime >
-          artPlayerRef.current.duration + skipConfigRef.current.outro_time
+          currentTime > duration + skipConfigRef.current.outro_time
         ) {
           if (
             currentEpisodeIndexRef.current <

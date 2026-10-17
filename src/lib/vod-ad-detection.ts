@@ -18,7 +18,7 @@ interface DateRange {
   invalid: boolean;
 }
 
-function attributes(text: string): Record<string, string> | null {
+export function vodAttributes(text: string): Record<string, string> | null {
   const result: Record<string, string> = {};
   const pattern = /\s*([A-Z0-9-]+)=(?:"([^"]*)"|([^,]*))(?:,|$)/gy;
   while (pattern.lastIndex < text.length) {
@@ -167,7 +167,7 @@ export function analyzeVodAds(lines: string[], playlistUrl: string) {
         .replace(/^:/, '')
         .trim();
       const declared = value.includes('=')
-        ? attributes(value)?.DURATION
+        ? vodAttributes(value)?.DURATION
         : value;
       const invalid =
         !!value &&
@@ -183,7 +183,7 @@ export function analyzeVodAds(lines: string[], playlistUrl: string) {
       const date = Date.parse(text.slice(25));
       if (Number.isFinite(date)) anchors.push({ time, date });
     } else if (text.startsWith('#EXT-X-DATERANGE:')) {
-      const attrs = attributes(text.slice(17));
+      const attrs = vodAttributes(text.slice(17));
       if (!attrs?.ID) continue;
       const entry = dates.get(attrs.ID) || {
         attrs: {},
@@ -255,13 +255,18 @@ export function analyzeVodAds(lines: string[], playlistUrl: string) {
         0.05 &&
       actualDuration > 0
     ) {
-      ranges.push({ start: positions[0], end: positions[0] + actualDuration });
+      const range = { start: positions[0], end: positions[0] + actualDuration };
+      if (range.start >= 0 && range.end <= time + 0.001) {
+        ranges.push(range);
+        entry.lines.forEach((line) => removeLines.add(line));
+      }
     } else if (
       entry.out !== undefined &&
       entry.in !== undefined &&
       entry.in > entry.out
     ) {
       ranges.push({ start: entry.out, end: entry.in });
+      entry.lines.forEach((line) => removeLines.add(line));
     }
   }
 

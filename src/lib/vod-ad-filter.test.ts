@@ -1,4 +1,5 @@
-import { markVodAds, skipVodAd } from './vod-ad-filter';
+import { markVodAds } from './vod-ad-filter';
+import { toVodContentTime, toVodSourceTime } from './vod-ad-rewrite';
 
 const url = 'https://media.test/video/program/episode/index.m3u8';
 
@@ -25,18 +26,26 @@ function playlist() {
   ].join('\n');
 }
 
-it('marks the nine confirmed ad segments as gaps without removing any original metadata', () => {
+it('removes exactly nine ad segments and joins every normal segment on a shorter timeline', () => {
   const original = playlist();
   const marked = markVodAds(original, url);
   expect(marked.ranges).toHaveLength(1);
   expect(marked.ranges[0].start).toBeCloseTo(301.88);
   expect(marked.ranges[0].end).toBeCloseTo(327.92);
-  expect(marked.playlist.match(/^#EXT-X-GAP$/gm)).toHaveLength(9);
-  expect(marked.playlist.replace(/^#EXT-X-GAP\n/gm, '')).toBe(original);
-  expect(markVodAds(marked.playlist, url)).toEqual(marked);
+  expect(marked.playlist).not.toContain('#EXT-X-GAP');
+  expect(marked.playlist).not.toContain('/video/adjump/');
+  expect(marked.playlist.match(/^#EXTINF:/gm)).toHaveLength(52);
+  expect(marked.playlist).toContain(
+    'before.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:6,\nafter.ts'
+  );
+  expect(marked.playlist.match(/^#EXT-X-DISCONTINUITY$/gm)).toHaveLength(1);
+  expect(markVodAds(marked.playlist, url)).toEqual({
+    playlist: marked.playlist,
+    ranges: [],
+  });
 });
 
-it('preserves CRLF, encrypted IV/sequence state, byte ranges and init maps', () => {
+it('preserves CRLF and init maps while making the original AES sequence IV explicit', () => {
   const original = playlist()
     .replace(
       '#EXTINF:1.88,',
@@ -45,7 +54,13 @@ it('preserves CRLF, encrypted IV/sequence state, byte ranges and init maps', () 
     .replace(/\n/g, '\r\n');
   const marked = markVodAds(original, url);
   expect(marked.ranges).toHaveLength(1);
-  expect(marked.playlist.replace(/^#EXT-X-GAP\r\n/gm, '')).toBe(original);
+  expect(marked.playlist).toContain('#EXT-X-MEDIA-SEQUENCE:20\r\n');
+  expect(marked.playlist).toContain('#EXT-X-MAP:URI="init.mp4"\r\n');
+  expect(marked.playlist).toContain('#EXT-X-BYTERANGE:1024@0\r\n');
+  expect(marked.playlist).toContain(
+    'IV=0x00000000000000000000000000000050\r\nafter.ts'
+  );
+  expect(marked.playlist.replace(/\r\n/g, '')).not.toContain('\n');
 });
 
 it('leaves ordinary discontinuities, unknown paths, query parameters and CDN switches alone', () => {
@@ -86,20 +101,14 @@ it('never changes live or master playlists and leaves malformed segment duration
     });
 });
 
-it('jumps from the reported 5:03 ad to the complete ad break end, including seeks into ads', () => {
-  const video = { currentTime: 303, duration: 4701.08 };
+it('maps history and toggle positions without moving past any normal program frame', () => {
   const { ranges } = markVodAds(playlist(), url);
-  expect(skipVodAd(video, ranges)).toBe(true);
-  expect(video.currentTime).toBeCloseTo(327.94);
-  expect(skipVodAd(video, ranges)).toBe(false);
-  video.currentTime = 310;
-  expect(skipVodAd(video, ranges)).toBe(true);
-  video.currentTime = 100;
-  expect(skipVodAd(video, ranges)).toBe(false);
-  expect(video.currentTime).toBe(100);
-  video.currentTime = 303;
-  video.duration = NaN;
-  expect(skipVodAd(video, ranges)).toBe(false);
+  expect(toVodContentTime(303, ranges)).toBeCloseTo(301.88);
+  expect(toVodContentTime(328.92, ranges)).toBeCloseTo(302.88);
+  expect(toVodSourceTime(302.88, ranges)).toBeCloseTo(328.92);
+  expect(toVodSourceTime(301.88, ranges)).toBeCloseTo(327.92);
+  expect(toVodContentTime(100, ranges)).toBe(100);
+  expect(toVodSourceTime(100, ranges)).toBe(100);
 });
 
 it('merges adjacent ad segments but preserves normal video between two ad breaks', () => {
@@ -110,4 +119,56 @@ it('merges adjacent ad segments but preserves normal video between two ad breaks
   const { ranges } = markVodAds(original, url);
   expect(ranges).toHaveLength(2);
   expect(ranges[1].start - ranges[0].end).toBeCloseTo(6);
+  for (const time of [0, 100, 302, 307, 310]) {
+    expect(toVodContentTime(toVodSourceTime(time, ranges), ranges)).toBeCloseTo(
+      time
+    );
+  }
+});
+
+it('makes an implicit byte offset explicit after removing a range from the same media file', () => {
+  const original =
+    '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\n#EXT-X-BYTERANGE:100@0\nall.ts\n#EXT-X-CUE-OUT:6\n#EXTINF:6,\n#EXT-X-BYTERANGE:200\nall.ts\n#EXT-X-CUE-IN\n#EXTINF:6,\n#EXT-X-BYTERANGE:300\nall.ts\n#EXT-X-ENDLIST\n';
+  const filtered = markVodAds(original, url);
+  expect(filtered.ranges).toEqual([{ start: 6, end: 12 }]);
+  expect(filtered.playlist).toContain('#EXT-X-BYTERANGE:300@300');
+  expect(filtered.playlist).not.toContain('#EXT-X-BYTERANGE:200');
+  expect(filtered.playlist).toContain(
+    '#EXT-X-DISCONTINUITY\n#EXTINF:6,\n#EXT-X-BYTERANGE:300@300'
+  );
+  expect(markVodAds(filtered.playlist, url).playlist).toBe(filtered.playlist);
+});
+
+it('preserves the source rather than guessing an invalid implicit byte offset or unsupported IV', () => {
+  for (const tag of [
+    '#EXT-X-BYTERANGE:300',
+    '#EXT-X-KEY:METHOD=SAMPLE-AES,URI="key"',
+  ]) {
+    const original = playlist().replace(
+      '#EXTINF:1.88,',
+      tag + '\n#EXTINF:1.88,'
+    );
+    expect(markVodAds(original, url)).toEqual({
+      playlist: original,
+      ranges: [],
+    });
+  }
+});
+
+it.each([15, -3])(
+  'maps EXT-X-START offsets to the shortened timeline: %s',
+  (offset) => {
+    const original = `#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-START:TIME-OFFSET=${offset},PRECISE=YES\n#EXTINF:6,\nbefore.ts\n#EXT-X-CUE-OUT:6\n#EXTINF:6,\nad.ts\n#EXT-X-CUE-IN\n#EXTINF:6,\nafter.ts\n#EXT-X-ENDLIST\n`;
+    expect(markVodAds(original, url).playlist).toContain(
+      `TIME-OFFSET=${offset < 0 ? -3 : 9},PRECISE=YES`
+    );
+  }
+);
+
+it('leaves independently clocked audio and subtitles on the source timeline', () => {
+  const original = playlist();
+  expect(markVodAds(original, url, true)).toEqual({
+    playlist: original,
+    ranges: [],
+  });
 });

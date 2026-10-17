@@ -15,8 +15,9 @@ const vod = (...lines: string[]) =>
     '#EXT-X-ENDLIST',
     '',
   ].join('\n');
-const gaps = (playlist: string) =>
-  playlist.match(/^#EXT-X-GAP$/gm)?.length || 0;
+const removedSegments = (original: string, filtered: string) =>
+  (original.match(/^#EXTINF:/gm)?.length || 0) -
+  (filtered.match(/^#EXTINF:/gm)?.length || 0);
 
 it.each([
   '#EXT-X-CUE-OUT',
@@ -34,8 +35,10 @@ it.each([
   );
   const marked = markVodAds(original, base);
   expect(marked.ranges).toEqual([{ start: 6, end: 12 }]);
-  expect(gaps(marked.playlist)).toBe(2);
-  expect(marked.playlist.replace(/^#EXT-X-GAP\n/gm, '')).toBe(original);
+  expect(removedSegments(original, marked.playlist)).toBe(2);
+  expect(marked.playlist).toContain('before.ts');
+  expect(marked.playlist).toContain('after.ts');
+  expect(marked.playlist).not.toContain('opaque-');
 });
 
 it.each([
@@ -97,7 +100,7 @@ it.each([
     );
     const marked = markVodAds(original, base);
     expect(marked.ranges).toEqual([{ start: 6, end: 12 }]);
-    expect(gaps(marked.playlist)).toBe(2);
+    expect(removedSegments(original, marked.playlist)).toBe(2);
   }
 );
 
@@ -120,7 +123,7 @@ it('keeps normal media in a segment that only partly overlaps a timed ad', () =>
   );
   expect(markVodAds(original, base)).toEqual({
     playlist: original,
-    ranges: [{ start: 2, end: 4 }],
+    ranges: [],
   });
 });
 
@@ -178,7 +181,7 @@ it.each(['X-ASSET-URI', 'X-ASSET-LIST'])(
     );
     const marked = markVodAds(original, base);
     expect(marked.ranges).toEqual([]);
-    expect(gaps(marked.playlist)).toBe(0);
+    expect(removedSegments(original, marked.playlist)).toBe(0);
     expect(marked.playlist).toBe(
       original.replace(first + '\n', '').replace(update + '\n', '')
     );
@@ -224,7 +227,7 @@ it.each([
       `https://any-resource.test/${directory}/index.m3u8`
     );
     expect(marked.ranges).toEqual([{ start: 120, end: 126 }]);
-    expect(gaps(marked.playlist)).toBe(1);
+    expect(removedSegments(original, marked.playlist)).toBe(1);
   }
 );
 
@@ -278,8 +281,11 @@ it('recognizes repeated opaque ad islands only when both program runs return to 
     { start: 120, end: 126 },
     { start: 246, end: 252 },
   ]);
-  expect(gaps(marked.playlist)).toBe(4);
-  expect(markVodAds(marked.playlist, base)).toEqual(marked);
+  expect(removedSegments(original, marked.playlist)).toBe(4);
+  expect(markVodAds(marked.playlist, base)).toEqual({
+    playlist: marked.playlist,
+    ranges: [],
+  });
 });
 
 it.each([

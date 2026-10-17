@@ -64,9 +64,8 @@ it.each(['manifest', 'level', 'audioTrack', 'subtitleTrack'])(
       );
       const response = jest.mocked(callbacks.onSuccess).mock.calls[0][0];
       expect(
-        typeof response.data === 'string' &&
-          response.data.includes('#EXT-X-GAP')
-      ).toBe(type !== 'subtitleTrack');
+        typeof response.data === 'string' && response.data.includes('opaque.ts')
+      ).toBe(type === 'subtitleTrack');
       expect(onRanges).toHaveBeenCalledTimes(
         type === 'manifest' || type === 'level' ? 1 : 0
       );
@@ -77,3 +76,74 @@ it.each(['manifest', 'level', 'audioTrack', 'subtitleTrack'])(
     }
   }
 );
+
+it('preserves synchronized media when a master declares external audio/subtitle tracks', () => {
+  const media =
+    '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nbefore.ts\n#EXT-X-CUE-OUT:6\n#EXTINF:6,\nad.ts\n#EXT-X-CUE-IN\n#EXTINF:6,\nafter.ts\n#EXT-X-ENDLIST\n';
+  const master =
+    '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="main",URI="audio.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=100000,AUDIO="audio"\nvideo.m3u8\n';
+  const load = jest
+    .spyOn(Hls.DefaultConfig.loader.prototype as Loader<LoaderContext>, 'load')
+    .mockImplementation(function (
+      this: Loader<LoaderContext>,
+      context,
+      _config,
+      callbacks
+    ) {
+      callbacks.onSuccess(
+        {
+          url: context.url,
+          data:
+            (context as PlaylistLoaderContext).type === 'manifest'
+              ? master
+              : media,
+        },
+        this.stats,
+        context,
+        null
+      );
+    });
+  const onRanges = jest.fn();
+  const PlaylistLoader = vodAdPlaylistLoader(
+    Hls.DefaultConfig.loader,
+    onRanges
+  );
+  const callbacks: LoaderCallbacks<PlaylistLoaderContext> = {
+    onSuccess: jest.fn(),
+    onError: jest.fn(),
+    onTimeout: jest.fn(),
+  };
+  try {
+    for (const type of ['manifest', 'level', 'audioTrack'] as const) {
+      const loader = new PlaylistLoader(Hls.DefaultConfig);
+      loader.load(
+        {
+          type: type as PlaylistLoaderContext['type'],
+          url: 'https://media.test/index.m3u8',
+          responseType: 'text',
+          level: 0,
+          id: 0,
+          deliveryDirectives: null,
+          levelOrTrack: null,
+        },
+        {
+          loadPolicy: Hls.DefaultConfig.playlistLoadPolicy.default,
+          maxRetry: 0,
+          timeout: 1000,
+          retryDelay: 0,
+          maxRetryDelay: 0,
+        },
+        callbacks
+      );
+      loader.destroy();
+    }
+    expect(
+      jest
+        .mocked(callbacks.onSuccess)
+        .mock.calls.map(([response]) => response.data)
+    ).toEqual([master, media, media]);
+    expect(onRanges.mock.calls).toEqual([[[]], [[]]]);
+  } finally {
+    load.mockRestore();
+  }
+});

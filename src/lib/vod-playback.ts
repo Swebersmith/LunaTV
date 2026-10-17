@@ -1,6 +1,17 @@
 import Hls from 'hls.js';
 
-import { skipVodAd, vodAdPlaylistLoader, VodAdRange } from './vod-ad-filter';
+import { vodAdPlaylistLoader, VodAdRange } from './vod-ad-filter';
+import { toVodContentTime, toVodSourceTime } from './vod-ad-rewrite';
+
+const timelines = new WeakMap<HTMLVideoElement, VodAdRange[]>();
+
+export function vodSourceTime(video: HTMLVideoElement, time: number) {
+  return toVodSourceTime(time, timelines.get(video) || []);
+}
+
+export function vodContentTime(video: HTMLVideoElement, time: number) {
+  return toVodContentTime(time, timelines.get(video) || []);
+}
 
 declare global {
   interface HTMLVideoElement {
@@ -16,6 +27,7 @@ export function attachVodHls(
 ): Hls | null {
   video.hls?.destroy();
   delete video.hls;
+  timelines.delete(video);
 
   if (!Hls.isSupported()) {
     if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = url;
@@ -23,8 +35,6 @@ export function attachVodHls(
     return null;
   }
 
-  let adRanges: VodAdRange[] = [];
-  const skipAd = () => skipVodAd(video, adRanges);
   const hls = new Hls({
     debug: false,
     enableWorker: true,
@@ -36,28 +46,14 @@ export function attachVodHls(
     maxBufferSize: 60 * 1000 * 1000,
     maxBufferHole: 0.3,
     enableInterstitialPlayback: !blockAds,
-    // Preserve timeline boundaries while filtering ad markers and segment groups.
+    // Join retained segments on a shortened timeline; no currentTime ad jumps.
     ...(blockAds && {
       pLoader: vodAdPlaylistLoader(Hls.DefaultConfig.loader, (ranges) => {
-        adRanges = ranges;
-        skipAd();
+        timelines.set(video, ranges);
       }),
     }),
   });
-  if (blockAds) {
-    const events = [
-      'timeupdate',
-      'seeking',
-      'waiting',
-      'playing',
-      'loadedmetadata',
-    ];
-    events.forEach((event) => video.addEventListener(event, skipAd));
-    hls.on(Hls.Events.DESTROYING, () => {
-      adRanges = [];
-      events.forEach((event) => video.removeEventListener(event, skipAd));
-    });
-  }
+  hls.on(Hls.Events.DESTROYING, () => timelines.delete(video));
   video.hls = hls;
   hls.loadSource(url);
   hls.attachMedia(video);

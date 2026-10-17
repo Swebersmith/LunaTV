@@ -6,16 +6,22 @@ import type {
 } from 'hls.js';
 
 import { analyzeVodAds, VodAdRange } from './vod-ad-detection';
+import { rewriteVodAds } from './vod-ad-rewrite';
 
 export type { VodAdRange } from './vod-ad-detection';
 
-export function markVodAds(playlist: string, playlistUrl: string) {
+export function markVodAds(
+  playlist: string,
+  playlistUrl: string,
+  sharedTimeline = false
+) {
   const ranges: VodAdRange[] = [];
   // Never apply finite VOD timestamps to a sliding live window or a master.
   if (
     !/^#EXTM3U\s*$/m.test(playlist) ||
     !/^#EXT-X-ENDLIST\s*$/m.test(playlist) ||
-    /^#EXT-X-STREAM-INF:/m.test(playlist)
+    /^#EXT-X-STREAM-INF:/m.test(playlist) ||
+    /^#EXT-X-(?:PART:|SKIP:|I-FRAMES-ONLY)/m.test(playlist)
   )
     return { playlist, ranges };
 
@@ -28,55 +34,20 @@ export function markVodAds(playlist: string, playlistUrl: string) {
   }
   const analysis = parsed;
   if (!analysis) return { playlist, ranges };
-  const output: string[] = [];
-  const gap = playlist.includes('\r\n') ? '#EXT-X-GAP\r' : '#EXT-X-GAP';
-  const gapLines = new Set(
-    analysis.segments
-      .filter(
-        (segment) =>
-          !segment.hasGap &&
-          analysis.ranges.some(
-            (range) =>
-              segment.start >= range.start - 0.001 &&
-              segment.end <= range.end + 0.001
-          )
-      )
-      .map((segment) => segment.line)
-  );
-  for (let index = 0; index < lines.length; index++) {
-    if (analysis.removeLines.has(index)) continue;
-    if (gapLines.has(index)) output.push(gap);
-    output.push(lines[index]);
-  }
-  // Keep URIs, sequence numbers, encryption IVs, byte ranges and all timeline
-  // tags intact. GAP tells hls.js not to download these confirmed ad segments.
-  return {
-    playlist:
-      gapLines.size || analysis.removeLines.size ? output.join('\n') : playlist,
-    ranges: analysis.ranges,
-  };
-}
-
-export function skipVodAd(
-  video: Pick<HTMLVideoElement, 'currentTime' | 'duration'>,
-  ranges: readonly VodAdRange[]
-) {
-  if (!Number.isFinite(video.duration) || video.duration <= 0) return false;
-  const range = ranges.find(
-    ({ start, end }) =>
-      video.currentTime >= start - 0.05 && video.currentTime < end
-  );
-  if (!range) return false;
-  const target = Math.min(range.end + 0.02, video.duration);
-  if (target <= video.currentTime) return false;
-  video.currentTime = target;
-  return true;
+  // Independently clocked audio/subtitle renditions cannot be shortened safely
+  // without matching segment boundaries across every rendition.
+  if (sharedTimeline) analysis.ranges = [];
+  const rewritten = rewriteVodAds(lines, analysis);
+  return rewritten
+    ? { playlist: rewritten.lines.join('\n'), ranges: rewritten.ranges }
+    : { playlist, ranges };
 }
 
 export function vodAdPlaylistLoader(
   BaseLoader: HlsConfig['loader'],
   onRanges: (ranges: VodAdRange[]) => void
 ): NonNullable<HlsConfig['pLoader']> {
+  let sharedTimeline = false;
   return class extends BaseLoader {
     declare context: PlaylistLoaderContext | null;
 
@@ -93,9 +64,21 @@ export function vodAdPlaylistLoader(
               context.type === 'audioTrack') &&
             typeof response.data === 'string'
           ) {
+            if (context.type === 'manifest')
+              sharedTimeline = response.data
+                .split('\n')
+                .some(
+                  (line) =>
+                    /^#EXT-X-MEDIA:/.test(line) &&
+                    /(?:^|,)TYPE=(?:AUDIO|SUBTITLES)(?:,|$)/.test(
+                      line.slice(13)
+                    ) &&
+                    /(?:^|,)URI="/.test(line.slice(13))
+                );
             const marked = markVodAds(
               response.data,
-              response.url || context.url
+              response.url || context.url,
+              sharedTimeline
             );
             if (context.type !== 'audioTrack') onRanges(marked.ranges);
             callbacks.onSuccess(
