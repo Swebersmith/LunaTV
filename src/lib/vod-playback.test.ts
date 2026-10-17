@@ -26,10 +26,50 @@ afterEach(() => {
   localStorage.clear();
 });
 
-it.each(['true', 'false'])(
-  'preserves timestamp boundaries with the legacy ad preference set to %s',
-  (preference) => {
-    localStorage.setItem('enable_blockad', preference);
+function playFixture(playlist: string, blockAds = true) {
+  let parsed: LevelLoadedData | undefined;
+  const loadSource = Hls.prototype.loadSource;
+  jest
+    .spyOn(Hls.prototype, 'loadSource')
+    .mockImplementation(function (this: Hls, url) {
+      this.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+        parsed = data;
+      });
+      // Run the real playlist loader/parser, replacing only HTTP transport.
+      const prototype = this.config.loader.prototype as Loader<LoaderContext>;
+      const load = jest
+        .spyOn(prototype, 'load')
+        .mockImplementation(function (
+          this: InstanceType<typeof Hls.DefaultConfig.loader>,
+          context: LoaderContext,
+          _config: LoaderConfiguration,
+          callbacks: LoaderCallbacks<LoaderContext>
+        ) {
+          callbacks.onSuccess(
+            { url: context.url, data: playlist },
+            this.stats,
+            context,
+            null
+          );
+        });
+      try {
+        loadSource.call(this, url);
+      } finally {
+        load.mockRestore();
+      }
+    });
+  const hls = attachVodHls(
+    video,
+    'https://media.test/movie.m3u8',
+    unsupported,
+    blockAds
+  );
+  return { hls, parsed };
+}
+
+it.each([true, false])(
+  'preserves normal timestamp boundaries with ad blocking set to %s',
+  (blockAds) => {
     const playlist = [
       '#EXTM3U',
       '#EXT-X-VERSION:3',
@@ -45,43 +85,7 @@ it.each(['true', 'false'])(
       'third.ts',
       '#EXT-X-ENDLIST',
     ].join('\n');
-    let parsed: LevelLoadedData | undefined;
-    const loadSource = Hls.prototype.loadSource;
-    jest
-      .spyOn(Hls.prototype, 'loadSource')
-      .mockImplementation(function (this: Hls, url) {
-        this.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
-          parsed = data;
-        });
-        // Run the actual playlist loader/parser, replacing only HTTP transport.
-        const prototype = this.config.loader.prototype as Loader<LoaderContext>;
-        const load = jest
-          .spyOn(prototype, 'load')
-          .mockImplementation(function (
-            this: InstanceType<typeof Hls.DefaultConfig.loader>,
-            context: LoaderContext,
-            _config: LoaderConfiguration,
-            callbacks: LoaderCallbacks<LoaderContext>
-          ) {
-            callbacks.onSuccess(
-              { url: context.url, data: playlist },
-              this.stats,
-              context,
-              null
-            );
-          });
-        try {
-          loadSource.call(this, url);
-        } finally {
-          load.mockRestore();
-        }
-      });
-
-    const hls = attachVodHls(
-      video,
-      'https://media.test/movie.m3u8',
-      unsupported
-    );
+    const { hls, parsed } = playFixture(playlist, blockAds);
     expect(hls).toBe(video.hls);
     expect(parsed?.details.fragments.map((fragment) => fragment.cc)).toEqual([
       7, 8, 9,
@@ -89,6 +93,53 @@ it.each(['true', 'false'])(
     expect(parsed?.details.totalduration).toBe(18);
     expect(parsed?.details.live).toBe(false);
     expect(unsupported).not.toHaveBeenCalled();
+  }
+);
+
+it.each([true, false])(
+  'keeps encrypted segment numbering and cleans up ad seeks with blocking set to %s',
+  (blockAds) => {
+    const playlist = [
+      '#EXTM3U',
+      '#EXT-X-VERSION:3',
+      '#EXT-X-TARGETDURATION:6',
+      '#EXT-X-MEDIA-SEQUENCE:20',
+      '#EXT-X-DISCONTINUITY-SEQUENCE:7',
+      '#EXT-X-KEY:METHOD=AES-128,URI="key.bin"',
+      '#EXTINF:6,',
+      'before.ts',
+      '#EXT-X-DISCONTINUITY',
+      '#EXTINF:3,',
+      '/video/adjump/time/ad0.ts',
+      '#EXTINF:2.04,',
+      '/video/adjump/time/ad1.ts',
+      '#EXT-X-DISCONTINUITY',
+      '#EXTINF:6,',
+      'after.ts',
+      '#EXT-X-ENDLIST',
+    ].join('\n');
+    const { hls, parsed } = playFixture(playlist, blockAds);
+    const fragments = parsed?.details.fragments || [];
+    expect(fragments.map((fragment) => fragment.sn)).toEqual([20, 21, 22, 23]);
+    expect(fragments.map((fragment) => fragment.cc)).toEqual([7, 8, 8, 9]);
+    expect(fragments.map((fragment) => !!fragment.gap)).toEqual([
+      false,
+      blockAds,
+      blockAds,
+      false,
+    ]);
+    expect(fragments[3].decryptdata?.iv?.[15]).toBe(23);
+    Object.defineProperty(video, 'duration', {
+      configurable: true,
+      value: 17.04,
+    });
+    video.currentTime = 7;
+    video.dispatchEvent(new Event('seeking'));
+    expect(video.currentTime).toBeCloseTo(blockAds ? 11.06 : 7);
+    hls?.destroy();
+    video.currentTime = 7;
+    video.dispatchEvent(new Event('timeupdate'));
+    expect(video.currentTime).toBe(7);
   }
 );
 

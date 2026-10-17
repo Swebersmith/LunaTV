@@ -1,5 +1,7 @@
 import Hls from 'hls.js';
 
+import { skipVodAd, vodAdPlaylistLoader, VodAdRange } from './vod-ad-filter';
+
 declare global {
   interface HTMLVideoElement {
     hls?: Hls;
@@ -9,7 +11,8 @@ declare global {
 export function attachVodHls(
   video: HTMLVideoElement,
   url: string,
-  onUnsupported: () => void
+  onUnsupported: () => void,
+  blockAds = true
 ): Hls | null {
   video.hls?.destroy();
   delete video.hls;
@@ -20,6 +23,8 @@ export function attachVodHls(
     return null;
   }
 
+  let adRanges: VodAdRange[] = [];
+  const skipAd = () => skipVodAd(video, adRanges);
   const hls = new Hls({
     debug: false,
     enableWorker: true,
@@ -30,10 +35,28 @@ export function attachVodHls(
     backBufferLength: 30,
     maxBufferSize: 60 * 1000 * 1000,
     maxBufferHole: 0.3,
-    // Use the original playlist. DISCONTINUITY and DISCONTINUITY-SEQUENCE
-    // describe timestamp/codec changes, not advertisements. Removing them
-    // makes valid segments overlap or leave gaps at each boundary.
+    // Preserve timestamp boundaries while skipping only confirmed ad URIs.
+    ...(blockAds && {
+      pLoader: vodAdPlaylistLoader(Hls.DefaultConfig.loader, (ranges) => {
+        adRanges = ranges;
+        skipAd();
+      }),
+    }),
   });
+  if (blockAds) {
+    const events = [
+      'timeupdate',
+      'seeking',
+      'waiting',
+      'playing',
+      'loadedmetadata',
+    ];
+    events.forEach((event) => video.addEventListener(event, skipAd));
+    hls.on(Hls.Events.DESTROYING, () => {
+      adRanges = [];
+      events.forEach((event) => video.removeEventListener(event, skipAd));
+    });
+  }
   video.hls = hls;
   hls.loadSource(url);
   hls.attachMedia(video);

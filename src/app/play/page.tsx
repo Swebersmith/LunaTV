@@ -78,6 +78,19 @@ function PlayPageClient() {
   // 跳过检查的时间间隔控制
   const lastSkipCheckRef = useRef(0);
 
+  const [blockAdEnabled, setBlockAdEnabled] = useState(() => {
+    try {
+      return (
+        typeof window === 'undefined' ||
+        localStorage.getItem('enable_blockad') !== 'false'
+      );
+    } catch {
+      return true;
+    }
+  });
+  const blockAdEnabledRef = useRef(blockAdEnabled);
+  blockAdEnabledRef.current = blockAdEnabled;
+
   // 视频基本信息
   const [videoTitle, setVideoTitle] = useState(searchParams.get('title') || '');
   const [videoYear, setVideoYear] = useState(searchParams.get('year') || '');
@@ -1278,9 +1291,12 @@ function PlayPageClient() {
               return;
             }
 
-            const hls = attachVodHls(video, url, () => {
-              setError('当前浏览器不支持 HLS 视频，请使用新版浏览器。');
-            });
+            const hls = attachVodHls(
+              video,
+              url,
+              () => setError('当前浏览器不支持 HLS 视频，请使用新版浏览器。'),
+              blockAdEnabledRef.current
+            );
             ensureVideoSource(video, url);
             if (!hls) return;
 
@@ -1310,6 +1326,24 @@ function PlayPageClient() {
             '<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgdmlld0JveD0iMCAwIDUwIDUwIj48cGF0aCBkPSJNMjUuMjUxIDYuNDYxYy0xMC4zMTggMC0xOC42ODMgOC4zNjUtMTguNjgzIDE4LjY4M2g0LjA2OGMwLTguMDcgNi41NDUtMTQuNjE1IDE0LjYxNS0xNC42MTVWNi40NjF6IiBmaWxsPSIjMDA5Njg4Ij48YW5pbWF0ZVRyYW5zZm9ybSBhdHRyaWJ1dGVOYW1lPSJ0cmFuc2Zvcm0iIGF0dHJpYnV0ZVR5cGU9IlhNTCIgZHVyPSIxcyIgZnJvbT0iMCAyNSAyNSIgcmVwZWF0Q291bnQ9ImluZGVmaW5pdGUiIHRvPSIzNjAgMjUgMjUiIHR5cGU9InJvdGF0ZSIvPjwvcGF0aD48L3N2Zz4=">',
         },
         settings: [
+          {
+            name: 'blockAds',
+            html: '去广告',
+            tooltip: blockAdEnabled ? '已开启' : '已关闭',
+            onClick() {
+              const enabled = !blockAdEnabledRef.current;
+              try {
+                localStorage.setItem('enable_blockad', String(enabled));
+              } catch {
+                // The current session can still toggle without local storage.
+              }
+              resumeTimeRef.current = artPlayerRef.current?.currentTime || 0;
+              cleanupPlayer();
+              blockAdEnabledRef.current = enabled;
+              setBlockAdEnabled(enabled);
+              return enabled ? '已开启' : '已关闭';
+            },
+          },
           {
             name: '跳过片头片尾',
             html: '跳过片头片尾',
@@ -1553,7 +1587,7 @@ function PlayPageClient() {
       console.error('创建播放器失败:', err);
       setError('播放器初始化失败');
     }
-  }, [Artplayer, Hls, videoUrl, loading]);
+  }, [Artplayer, Hls, videoUrl, loading, blockAdEnabled]);
 
   // 当组件卸载时清理定时器、Wake Lock 和播放器资源
   useEffect(() => {
