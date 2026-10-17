@@ -14,6 +14,17 @@ export async function GET(request: Request) {
     const { url, source, ua } = await liveProxyContext(request);
     const response = await fetchLiveUpstream(url, ua, request);
     const headers = liveResponseHeaders(response);
+    if (response.url && response.url !== url) {
+      // Keep subsequent reloads on the resolved backend. Re-fetching a public
+      // load-balancer URL can alternate between incompatible live timelines.
+      await response.body?.cancel();
+      const target = new URL(request.url);
+      target.searchParams.set('url', response.url);
+      headers.set('Location', target.href);
+      headers.delete('content-length');
+      headers.delete('content-range');
+      return new Response(null, { status: 307, headers });
+    }
     const type = headers.get('content-type') || '';
     if (/^(video|audio)\//i.test(type) && !/mpegurl/i.test(type))
       return new Response(response.body, { status: response.status, headers });

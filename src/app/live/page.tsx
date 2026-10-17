@@ -320,14 +320,15 @@ function LivePageClient() {
   };
 
   const handleUnavailable = () => {
-    if (!currentChannel) return;
+    if (!currentChannel) return false;
     attemptedAddresses.current.add(currentChannel.url);
     const alternative = nextLiveAlternative(currentChannels, currentChannel, attemptedAddresses.current);
-    if (!alternative) return;
+    if (!alternative) return false;
     setFailoverMessage('已自动切换到该频道的备用线路');
     setCurrentChannel(alternative);
     setVideoUrl(alternative.url);
     scrollToChannel(alternative);
+    return true;
   };
 
   // 滚动到指定频道位置的函数

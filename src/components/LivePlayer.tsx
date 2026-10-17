@@ -4,13 +4,20 @@ import Artplayer from 'artplayer';
 import Hls from 'hls.js';
 import { MutableRefObject, useEffect, useRef, useState } from 'react';
 
+import {
+  liveBufferAhead,
+  liveHlsConfig,
+  liveStartupBuffer,
+} from '@/lib/live-playback';
+import { livePlaylistLoader } from '@/lib/live-playlist-loader';
+
 interface Props {
   url: string;
   source: string;
   poster?: string;
   playerRef: MutableRefObject<Artplayer | null>;
   onRefresh?: () => void;
-  onUnavailable?: () => void;
+  onUnavailable?: () => boolean;
 }
 
 export default function LivePlayer({
@@ -27,8 +34,10 @@ export default function LivePlayer({
   const [error, setError] = useState('');
   const [needsPlay, setNeedsPlay] = useState(false);
   const [forceProxy, setForceProxy] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
   const unavailable = useRef(onUnavailable);
   unavailable.current = onUnavailable;
+  const timelineRestart = useRef({ url, source, at: 0 });
 
   useEffect(() => {
     if (!container.current || !url || !source) return;
@@ -36,6 +45,8 @@ export default function LivePlayer({
     let failed = false;
     let hls: Hls | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let startupTimer: ReturnType<typeof setTimeout> | undefined;
+    let bufferingTimer: ReturnType<typeof setTimeout> | undefined;
     let art: Artplayer | undefined;
     let networkRecoveries = 0;
     let mediaRecoveries = 0;
@@ -43,16 +54,34 @@ export default function LivePlayer({
     let lastTime = -1;
     let autoplayTried = false;
     let stableSince = 0;
+    let startupSince = 0;
+    let started = false;
+    let waitingSince = 0;
+    let stalls: number[] = [];
     const controller = new AbortController();
     const previousReconnectLimit = Artplayer.RECONNECT_TIME_MAX;
+    if (
+      timelineRestart.current.url !== url ||
+      timelineRestart.current.source !== source
+    )
+      timelineRestart.current = { url, source, at: 0 };
     setLoading(true);
     setError('');
     setNeedsPlay(false);
+    setHasStarted(false);
+
+    const clearBuffering = () => {
+      clearTimeout(bufferingTimer);
+      bufferingTimer = undefined;
+      setLoading(false);
+    };
 
     const fail = (message: string, tryAlternative = true) => {
       if (disposed || failed) return;
       failed = true;
       clearTimeout(retryTimer);
+      clearTimeout(startupTimer);
+      clearTimeout(bufferingTimer);
       setLoading(false);
       setError(message);
       hls?.stopLoad();
@@ -63,8 +92,37 @@ export default function LivePlayer({
       }
       if (tryAlternative) unavailable.current?.();
     };
+    const restartTimeline = () => {
+      if (disposed || failed) return false;
+      const now = Date.now();
+      if (
+        timelineRestart.current.at &&
+        now - timelineRestart.current.at < 90000
+      )
+        return false;
+      timelineRestart.current.at = now;
+      failed = true;
+      hls?.stopLoad();
+      setAttempt((value) => value + 1);
+      return true;
+    };
     const play = () => {
-      if (disposed || !art || autoplayTried) return;
+      if (disposed || failed || !art || autoplayTried) return;
+      const required = liveStartupBuffer(hls?.latestLevelDetails);
+      if (required && liveBufferAhead(art.video) + 0.1 < required) {
+        if (!startupSince) startupSince = Date.now();
+        // Some native engines or very short sources won't fill while paused.
+        // Keep the wait finite and let normal playback/recovery take over.
+        if (Date.now() - startupSince < 6000) {
+          if (!startupTimer)
+            startupTimer = setTimeout(() => {
+              startupTimer = undefined;
+              play();
+            }, 200);
+          return;
+        }
+      }
+      clearTimeout(startupTimer);
       autoplayTried = true;
       art.video.play().catch(() => {
         if (!disposed) {
@@ -155,59 +213,11 @@ export default function LivePlayer({
                 video.src = playlist;
               } else if (Hls.isSupported()) {
                 hls = new Hls({
-                  enableWorker: true,
-                  lowLatencyMode: false,
-                  maxBufferLength: 20,
-                  backBufferLength: 15,
-                  maxBufferSize: 30 * 1000 * 1000,
-                  manifestLoadPolicy: {
-                    default: {
-                      maxTimeToFirstByteMs: 8000,
-                      maxLoadTimeMs: 12000,
-                      timeoutRetry: {
-                        maxNumRetry: 2,
-                        retryDelayMs: 1000,
-                        maxRetryDelayMs: 3000,
-                      },
-                      errorRetry: {
-                        maxNumRetry: 2,
-                        retryDelayMs: 1000,
-                        maxRetryDelayMs: 3000,
-                      },
-                    },
-                  },
-                  playlistLoadPolicy: {
-                    default: {
-                      maxTimeToFirstByteMs: 8000,
-                      maxLoadTimeMs: 12000,
-                      timeoutRetry: {
-                        maxNumRetry: 2,
-                        retryDelayMs: 1000,
-                        maxRetryDelayMs: 3000,
-                      },
-                      errorRetry: {
-                        maxNumRetry: 2,
-                        retryDelayMs: 1000,
-                        maxRetryDelayMs: 3000,
-                      },
-                    },
-                  },
-                  fragLoadPolicy: {
-                    default: {
-                      maxTimeToFirstByteMs: 10000,
-                      maxLoadTimeMs: 20000,
-                      timeoutRetry: {
-                        maxNumRetry: 2,
-                        retryDelayMs: 1000,
-                        maxRetryDelayMs: 3000,
-                      },
-                      errorRetry: {
-                        maxNumRetry: 2,
-                        retryDelayMs: 1000,
-                        maxRetryDelayMs: 3000,
-                      },
-                    },
-                  },
+                  ...liveHlsConfig(),
+                  pLoader: livePlaylistLoader(Hls.DefaultConfig.loader, () => {
+                    if (!restartTimeline())
+                      fail('直播源的播放列表反复异常，请重试或切换频道。');
+                  }),
                 });
                 hls.on(Hls.Events.ERROR, (_event, data) => {
                   if (disposed || failed || !data.fatal) return;
@@ -220,6 +230,20 @@ export default function LivePlayer({
                     // CORS failure. Retry once with all resources proxied.
                     setForceProxy(true);
                     return;
+                  }
+                  if (
+                    data.type === Hls.ErrorTypes.NETWORK_ERROR &&
+                    data.context?.url
+                  ) {
+                    const resolved = new URL(
+                      data.context.url,
+                      window.location.href
+                    ).searchParams.get('url');
+                    // A relocated backend may use an expiring signature.
+                    // Reopen the original entry once, rather than retrying
+                    // the expired resolved URL indefinitely.
+                    if (resolved && resolved !== url && restartTimeline())
+                      return;
                   }
                   if (
                     data.type === Hls.ErrorTypes.NETWORK_ERROR &&
@@ -266,23 +290,39 @@ export default function LivePlayer({
         playerRef.current = art;
         art.on('video:canplay', () => {
           if (!disposed) {
-            setLoading(false);
             play();
           }
         });
         art.on('video:playing', () => {
-          if (!disposed) {
+          if (!disposed && !failed) {
+            const now = Date.now();
+            if (waitingSince && now - waitingSince >= 1500) {
+              stalls = stalls.filter((time) => now - time < 90000);
+              stalls.push(now);
+              if (stalls.length >= 3) {
+                stalls = [];
+                if (unavailable.current?.()) {
+                  failed = true;
+                  hls?.stopLoad();
+                  return;
+                }
+              }
+            }
+            waitingSince = 0;
             lastProgress = Date.now();
-            setLoading(false);
+            started = true;
+            setHasStarted(true);
+            clearBuffering();
             setNeedsPlay(false);
             setError('');
           }
         });
         art.on('video:timeupdate', () => {
-          if (disposed || !art || art.video.currentTime === lastTime) return;
+          if (disposed || failed || !art || art.video.currentTime === lastTime)
+            return;
           lastTime = art.video.currentTime;
           lastProgress = Date.now();
-          setLoading(false);
+          clearBuffering();
           if (!stableSince) stableSince = lastProgress;
           if (lastProgress - stableSince > 30000) {
             networkRecoveries = 0;
@@ -291,10 +331,28 @@ export default function LivePlayer({
           }
         });
         art.on('video:waiting', () => {
-          if (!disposed) {
+          if (!disposed && !failed) {
             stableSince = 0;
-            setLoading(true);
+            if (started && !art?.video.paused && !waitingSince)
+              waitingSince = Date.now();
+            if (!started) setLoading(true);
+            else if (!bufferingTimer)
+              bufferingTimer = setTimeout(() => {
+                bufferingTimer = undefined;
+                if (
+                  !disposed &&
+                  !failed &&
+                  art &&
+                  !art.video.paused &&
+                  art.video.readyState < 3
+                )
+                  setLoading(true);
+              }, 700);
           }
+        });
+        art.on('video:pause', () => {
+          waitingSince = 0;
+          if (!disposed && !failed && started) clearBuffering();
         });
         art.on('video:error', () => {
           if (hls || disposed || failed) return;
@@ -352,6 +410,8 @@ export default function LivePlayer({
       disposed = true;
       controller.abort();
       clearTimeout(retryTimer);
+      clearTimeout(startupTimer);
+      clearTimeout(bufferingTimer);
       clearInterval(watchdog);
       window.removeEventListener('online', online);
       document.removeEventListener('visibilitychange', visible);
@@ -376,10 +436,14 @@ export default function LivePlayer({
       <div ref={container} className='relative z-0 h-full w-full' />
       {loading && !error && !needsPlay && (
         <div
-          className='pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/60 text-sm text-white'
+          className={`pointer-events-none absolute z-10 flex items-center justify-center text-sm text-white ${
+            hasStarted
+              ? 'bottom-16 left-4 rounded-lg bg-black/60 px-3 py-2'
+              : 'inset-0 bg-black/60'
+          }`}
           role='status'
         >
-          正在连接直播…
+          {hasStarted ? '正在缓冲…' : '正在连接直播…'}
         </div>
       )}
       {needsPlay && !error && (

@@ -28,11 +28,9 @@ const request = (url = upstream) =>
       new URLSearchParams({ url, 'moontv-source': 'live' })
   );
 beforeEach(() => {
-  jest
-    .mocked(getConfig)
-    .mockResolvedValue({
-      LiveConfig: [{ key: 'live', ua: 'TestPlayer' }],
-    } as Awaited<ReturnType<typeof getConfig>>);
+  jest.mocked(getConfig).mockResolvedValue({
+    LiveConfig: [{ key: 'live', ua: 'TestPlayer' }],
+  } as Awaited<ReturnType<typeof getConfig>>);
   global.fetch = jest.fn();
 });
 afterEach(() => {
@@ -42,11 +40,9 @@ afterEach(() => {
 
 it('preserves signed URLs without decoding twice and rejects disabled sources', async () => {
   expect((await liveProxyContext(request())).url).toBe(upstream);
-  jest
-    .mocked(getConfig)
-    .mockResolvedValue({
-      LiveConfig: [{ key: 'live', disabled: true }],
-    } as Awaited<ReturnType<typeof getConfig>>);
+  jest.mocked(getConfig).mockResolvedValue({
+    LiveConfig: [{ key: 'live', disabled: true }],
+  } as Awaited<ReturnType<typeof getConfig>>);
   expect((await segment(request())).status).toBe(404);
   expect(fetch).not.toHaveBeenCalled();
 });
@@ -88,15 +84,43 @@ it('does not send HTTP media directly from an HTTPS page, and preserves inline k
   expect(output.endsWith('https://cdn.test/b.ts')).toBe(true);
 });
 
-it('rewrites a text/plain extensionless playlist relative to its redirected URL', async () => {
+it('pins a redirected playlist to its backend through the authenticated proxy and rewrites relative URLs', async () => {
   const response = new Response('#EXTM3U\n#EXTINF:4,\nseg.ts', {
     headers: { 'Content-Type': 'text/plain', 'Content-Length': '30' },
   });
   Object.defineProperty(response, 'url', {
     value: 'https://cdn.test/final/playlist',
   });
-  jest.mocked(fetch).mockResolvedValue(response);
-  const result = await manifest(request());
+  if (!response.body) throw new Error('Missing response body');
+  const cancel = jest.spyOn(response.body, 'cancel');
+  const final = new Response('#EXTM3U\n#EXTINF:4,\nseg.ts', {
+    headers: { 'Content-Type': 'text/plain', 'Content-Length': '30' },
+  });
+  Object.defineProperty(final, 'url', {
+    value: 'https://cdn.test/final/playlist',
+  });
+  jest
+    .mocked(fetch)
+    .mockResolvedValueOnce(response)
+    .mockResolvedValueOnce(final);
+  const initial = new URL(request().url);
+  initial.searchParams.set('allowCORS', 'true');
+  const redirect = await manifest(new Request(initial));
+  expect(redirect.status).toBe(307);
+  expect(cancel).toHaveBeenCalledTimes(1);
+  expect(redirect.headers.get('Cache-Control')).toContain('no-store');
+  const location = new URL(redirect.headers.get('Location') || '');
+  expect(location.origin).toBe('https://tv.test');
+  expect(location.pathname).toBe('/api/proxy/m3u8');
+  expect(location.searchParams.get('url')).toBe(
+    'https://cdn.test/final/playlist'
+  );
+  expect(location.searchParams.get('moontv-source')).toBe('live');
+  expect(location.searchParams.get('allowCORS')).toBe('true');
+  // Use full proxy here to inspect rewritten segment URLs as well.
+  location.searchParams.delete('allowCORS');
+  const result = await manifest(new Request(location));
+  expect(result.status).toBe(200);
   expect(result.headers.get('Content-Type')).toBe(
     'application/vnd.apple.mpegurl'
   );
@@ -114,18 +138,16 @@ it('streams MP4 and range responses without buffering or cancelling them early',
     },
     cancel,
   });
-  jest
-    .mocked(fetch)
-    .mockResolvedValue(
-      new Response(stream, {
-        status: 206,
-        headers: {
-          'Content-Type': 'video/mp4',
-          'Content-Range': 'bytes 0-2/9',
-          'Content-Length': '3',
-        },
-      })
-    );
+  jest.mocked(fetch).mockResolvedValue(
+    new Response(stream, {
+      status: 206,
+      headers: {
+        'Content-Type': 'video/mp4',
+        'Content-Range': 'bytes 0-2/9',
+        'Content-Length': '3',
+      },
+    })
+  );
   const req = new Request(request(), { headers: { Range: 'bytes=0-2' } });
   const result = await manifest(req);
   expect(result.status).toBe(206);

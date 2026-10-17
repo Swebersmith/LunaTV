@@ -2,10 +2,16 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import Hls from 'hls.js';
 
+import * as playlists from '@/lib/live-playlist-loader';
+
 import LivePlayer from './LivePlayer';
 
 const mockPlayers: any[] = [];
 const mockHls: any[] = [];
+jest.mock('@/lib/live-playlist-loader', () => {
+  const actual = jest.requireActual('@/lib/live-playlist-loader');
+  return { ...actual, livePlaylistLoader: jest.fn(actual.livePlaylistLoader) };
+});
 jest.mock('artplayer', () => ({
   __esModule: true,
   default: class {
@@ -25,6 +31,7 @@ jest.mock('artplayer', () => ({
 jest.mock('hls.js', () => ({
   __esModule: true,
   default: class {
+    static DefaultConfig: { loader: new () => object } = { loader: class {} };
     static isSupported(): boolean {
       return true;
     }
@@ -50,6 +57,7 @@ jest.mock('hls.js', () => ({
 }));
 
 beforeEach(() => {
+  jest.clearAllMocks();
   localStorage.clear();
   mockPlayers.length = 0;
   mockHls.length = 0;
@@ -92,6 +100,12 @@ it('reports expired authentication without cycling through station alternatives'
       response: { code: 401 },
     })
   );
+  expect(screen.getByRole('alert')).toHaveTextContent('登录已失效');
+  act(() => {
+    mockPlayers[0].events['video:playing']();
+    mockPlayers[0].events['video:timeupdate']();
+    mockPlayers[0].events['video:waiting']();
+  });
   expect(screen.getByRole('alert')).toHaveTextContent('登录已失效');
   expect(onUnavailable).not.toHaveBeenCalled();
 });
@@ -270,4 +284,225 @@ it('continues to HLS playback when an extensionless precheck fails', async () =>
   expect(mockHls).toHaveLength(1);
   expect(mockHls[0].loadSource).toHaveBeenCalled();
   global.fetch = original;
+});
+
+it('waits for a useful initial buffer and then starts without repeatedly recreating the player', () => {
+  jest.useFakeTimers();
+  const view = render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+    />
+  );
+  mockHls[0].latestLevelDetails = {
+    live: true,
+    targetduration: 5,
+    totalduration: 15,
+  };
+  let end = 4;
+  Object.defineProperty(mockPlayers[0].video, 'buffered', {
+    value: { length: 1, start: () => 0, end: () => end },
+  });
+  act(() => {
+    mockPlayers[0].events['video:canplay']();
+    jest.advanceTimersByTime(1000);
+  });
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  end = 12;
+  act(() => jest.advanceTimersByTime(300));
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+  expect(mockPlayers).toHaveLength(1);
+  view.unmount();
+  expect(jest.getTimerCount()).toBe(0);
+});
+
+it('never waits indefinitely if the initial live buffer cannot grow', () => {
+  jest.useFakeTimers();
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+    />
+  );
+  mockHls[0].latestLevelDetails = {
+    live: true,
+    targetduration: 5,
+    totalduration: 15,
+  };
+  act(() => {
+    mockPlayers[0].events['video:canplay']();
+    jest.advanceTimersByTime(6500);
+  });
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+});
+
+it('avoids flashing a loading mask for a brief stall and keeps a small indicator for longer buffering', () => {
+  jest.useFakeTimers();
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+    />
+  );
+  Object.defineProperty(mockPlayers[0].video, 'paused', { value: false });
+  Object.defineProperty(mockPlayers[0].video, 'readyState', { value: 2 });
+  act(() => mockPlayers[0].events['video:playing']());
+  act(() => {
+    mockPlayers[0].events['video:waiting']();
+    jest.advanceTimersByTime(400);
+  });
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  act(() => mockPlayers[0].events['video:timeupdate']());
+  act(() => jest.advanceTimersByTime(500));
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  act(() => {
+    mockPlayers[0].events['video:waiting']();
+    jest.advanceTimersByTime(750);
+  });
+  expect(screen.getByRole('status')).toHaveTextContent('正在缓冲');
+  expect(screen.getByRole('status')).not.toHaveClass('inset-0');
+});
+
+it.each([false, true])(
+  'tries an alternative after repeated sustained stalls and stops only when a replacement exists: %p',
+  (alternative) => {
+    jest.useFakeTimers();
+    const onUnavailable = jest.fn().mockReturnValue(alternative);
+    render(
+      <LivePlayer
+        url='https://media.test/live.m3u8'
+        source='test'
+        playerRef={{ current: null }}
+        onUnavailable={onUnavailable}
+      />
+    );
+    Object.defineProperty(mockPlayers[0].video, 'paused', { value: false });
+    Object.defineProperty(mockPlayers[0].video, 'readyState', { value: 2 });
+    act(() => mockPlayers[0].events['video:playing']());
+    for (let count = 0; count < 3; count++)
+      act(() => {
+        mockPlayers[0].events['video:waiting']();
+        jest.advanceTimersByTime(1600);
+        mockPlayers[0].events['video:playing']();
+      });
+    expect(onUnavailable).toHaveBeenCalledTimes(1);
+    expect(mockHls[0].stopLoad).toHaveBeenCalledTimes(alternative ? 1 : 0);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  }
+);
+
+it('does not restart or seek a healthy stream during sustained viewing', () => {
+  jest.useFakeTimers();
+  const onUnavailable = jest.fn();
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+      onUnavailable={onUnavailable}
+    />
+  );
+  Object.defineProperty(mockPlayers[0].video, 'paused', { value: false });
+  Object.defineProperty(mockPlayers[0].video, 'readyState', { value: 4 });
+  act(() => mockPlayers[0].events['video:playing']());
+  for (let time = 6; time <= 120; time += 6)
+    act(() => {
+      jest.advanceTimersByTime(6000);
+      mockPlayers[0].video.currentTime = time;
+      mockPlayers[0].events['video:timeupdate']();
+    });
+  expect(mockHls[0].startLoad).not.toHaveBeenCalled();
+  expect(mockHls[0].recoverMediaError).not.toHaveBeenCalled();
+  expect(onUnavailable).not.toHaveBeenCalled();
+  expect(mockPlayers).toHaveLength(1);
+});
+
+it('does not count time spent paused by the viewer as a sustained network stall', () => {
+  jest.useFakeTimers();
+  const onUnavailable = jest.fn().mockReturnValue(true);
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+      onUnavailable={onUnavailable}
+    />
+  );
+  let paused = false;
+  Object.defineProperty(mockPlayers[0].video, 'paused', { get: () => paused });
+  Object.defineProperty(mockPlayers[0].video, 'readyState', { value: 2 });
+  act(() => mockPlayers[0].events['video:playing']());
+  for (let count = 0; count < 3; count++)
+    act(() => {
+      mockPlayers[0].events['video:waiting']();
+      jest.advanceTimersByTime(400);
+      paused = true;
+      mockPlayers[0].events['video:pause']();
+      jest.advanceTimersByTime(5000);
+      paused = false;
+      mockPlayers[0].events['video:playing']();
+    });
+  expect(onUnavailable).not.toHaveBeenCalled();
+  expect(mockHls[0].stopLoad).not.toHaveBeenCalled();
+});
+
+it('starts a fresh timeline for a reset source and bounds repeated automatic restarts', () => {
+  const factory = playlists.livePlaylistLoader as jest.MockedFunction<
+    typeof playlists.livePlaylistLoader
+  >;
+  const onUnavailable = jest.fn().mockReturnValue(false);
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+      onUnavailable={onUnavailable}
+    />
+  );
+  act(() => factory.mock.calls[0][1]());
+  expect(mockHls).toHaveLength(2);
+  expect(mockHls[0].destroy).toHaveBeenCalledTimes(1);
+  act(() => factory.mock.calls[1][1]());
+  expect(mockHls).toHaveLength(2);
+  expect(screen.getByRole('alert')).toHaveTextContent('播放列表反复异常');
+  expect(onUnavailable).toHaveBeenCalledTimes(1);
+});
+
+it('reopens the original entry when a resolved playlist expires, with bounded recovery', () => {
+  jest.useFakeTimers();
+  const onUnavailable = jest.fn().mockReturnValue(false);
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+      onUnavailable={onUnavailable}
+    />
+  );
+  const failure = {
+    fatal: true,
+    type: 'networkError',
+    context: {
+      url:
+        'https://tv.test/api/proxy/m3u8?' +
+        new URLSearchParams({ url: 'https://cdn.test/expired.m3u8?key=old' }),
+    },
+  };
+  act(() => mockHls[0].error('error', failure));
+  expect(mockHls).toHaveLength(2);
+  expect(mockHls[0].destroy).toHaveBeenCalledTimes(1);
+  expect(mockHls[1].loadSource.mock.calls[0][0]).toContain(
+    encodeURIComponent('https://media.test/live.m3u8')
+  );
+  for (let count = 0; count < 3; count++)
+    act(() => {
+      mockHls[1].error('error', failure);
+      jest.advanceTimersByTime(3000);
+    });
+  expect(mockHls).toHaveLength(2);
+  expect(onUnavailable).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole('alert')).toBeVisible();
 });
