@@ -5,6 +5,14 @@ import { decode } from 'he';
 import { getConfig } from '@/lib/config';
 import { fetchLiveUpstream, readLiveText } from '@/lib/live-proxy';
 
+import {
+  beijingEpgDate,
+  diypChannelNames,
+  diypEpgUrl,
+  isDiypEpg,
+  parseDiypPrograms,
+} from './live-epg';
+
 const defaultUA = 'AptvPlayer/1.4.10';
 
 export interface LiveChannels {
@@ -133,11 +141,14 @@ export async function getLiveEpg(key: string, tvgId?: string) {
     ? [tvgId]
     : Array.from(
         new Set(
-          channelData.channels.map((channel) => channel.tvgId).filter(Boolean)
+          channelData.channels
+            .map((channel) => channel.tvgId || channel.name)
+            .filter(Boolean)
         )
       );
   const cacheKey = key + '\0' + (tvgId || '*');
-  const fingerprint = JSON.stringify([liveFingerprint(live), guides, ids]);
+  const day = beijingEpgDate();
+  const fingerprint = JSON.stringify([liveFingerprint(live), guides, ids, day]);
   const cached = cachedEpg[cacheKey];
   const ttl =
     cached && Object.keys(cached.epgs).length ? 10 * 60 * 1000 : 60000;
@@ -149,7 +160,15 @@ export async function getLiveEpg(key: string, tvgId?: string) {
   for (const guide of guides) {
     const missing = ids.filter((id) => !epgs[id]?.length);
     if (!missing.length || Date.now() >= deadline) break;
-    const result = await parseEpg(guide.url, guide.ua, missing, deadline);
+    const result = isDiypEpg(guide.url)
+      ? await parseDiypGuide(
+          guide,
+          missing,
+          channelData.channels,
+          day,
+          deadline
+        )
+      : await parseEpg(guide.url, guide.ua, missing, deadline);
     for (const id of missing) {
       if (result[id]?.length) {
         epgs[id] = result[id];
@@ -169,6 +188,49 @@ export async function getLiveEpg(key: string, tvgId?: string) {
     };
   }
   return { ...channelData, epgUrl: matchedUrl, epgs };
+}
+
+async function parseDiypGuide(
+  guide: { url: string; ua: string },
+  ids: string[],
+  channels: LiveChannels['channels'],
+  day: string,
+  deadline: number
+): Promise<LiveChannels['epgs']> {
+  const result: LiveChannels['epgs'] = {};
+  // Viewers request one station. Bound legacy bulk calls as well: a JSON API
+  // must never cause hundreds of upstream requests for a whole M3U playlist.
+  for (const id of ids.slice(0, 4)) {
+    const channel = channels.find(
+      (item) => (item.tvgId || item.name) === id
+    ) || { tvgId: id, name: id };
+    for (const name of diypChannelNames(channel)) {
+      if (Date.now() >= deadline) return result;
+      try {
+        const budget = Math.min(4000, Math.max(1, deadline - Date.now()));
+        const response = await fetchLiveUpstream(
+          diypEpgUrl(guide.url, name, day),
+          guide.ua,
+          undefined,
+          budget
+        );
+        const text = await readLiveText(
+          response,
+          512 * 1024,
+          Math.min(budget, Math.max(1, deadline - Date.now()))
+        );
+        const programs = parseDiypPrograms(JSON.parse(text), day);
+        if (programs.length) {
+          result[id] = programs;
+          break;
+        }
+      } catch {
+        // A missing or malformed guide is optional; try the next channel alias
+        // or source without interfering with video playback.
+      }
+    }
+  }
+  return result;
 }
 
 async function parseEpg(

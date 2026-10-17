@@ -14,6 +14,7 @@ import {
   getLiveEpg,
   parseM3U,
 } from './live';
+import { beijingEpgDate } from './live-epg';
 
 Object.assign(
   global,
@@ -254,14 +255,12 @@ it('falls back to an M3U guide when both a live override and shared guide fail',
 it('cancels a stalled guide within the total request budget without affecting cached channels', async () => {
   jest.useFakeTimers();
   const cancel = jest.fn();
-  jest
-    .mocked(getConfig)
-    .mockResolvedValue({
-      LiveConfig: [source],
-      EpgConfig: [
-        { key: 'slow', name: '慢节目单', url: 'https://slow.test/guide' },
-      ],
-    } as AdminConfig);
+  jest.mocked(getConfig).mockResolvedValue({
+    LiveConfig: [source],
+    EpgConfig: [
+      { key: 'slow', name: '慢节目单', url: 'https://slow.test/guide' },
+    ],
+  } as AdminConfig);
   jest
     .mocked(fetch)
     .mockImplementation(
@@ -281,5 +280,127 @@ it('cancels a stalled guide within the total request budget without affecting ca
     expect((await getCachedLiveChannels(source.key))?.channelNumber).toBe(1);
   } finally {
     jest.useRealTimers();
+  }
+});
+
+it('queries a DIYP base address for the current station/day, caches data and never writes storage', async () => {
+  jest
+    .mocked(getConfig)
+    .mockResolvedValue({
+      LiveConfig: [source],
+      EpgConfig: [
+        {
+          key: 'json',
+          name: 'JSON',
+          url: 'https://epg.test/api/diyp/?key=secret',
+        },
+      ],
+    } as AdminConfig);
+  jest
+    .mocked(fetch)
+    .mockImplementation(
+      async (input) =>
+        new Response(
+          String(input) === source.url
+            ? '#EXTM3U\n#EXTINF:-1 tvg-id="opaque-123",CCTV-1(720p)\nhttps://media.test/live.m3u8'
+            : JSON.stringify({
+                channel_name: 'CCTV-1综合',
+                date: beijingEpgDate(),
+                epg_data: [{ start: '19:00', end: '19:30', title: '新闻' }],
+              })
+        )
+    );
+  const guide = await getLiveEpg(source.key, 'opaque-123');
+  expect(guide?.epgs['opaque-123'][0].title).toBe('新闻');
+  const request = new URL(String(jest.mocked(fetch).mock.calls[1][0]));
+  expect(request.searchParams.get('ch')).toBe('CCTV1');
+  expect(request.searchParams.get('date')).toBe(beijingEpgDate());
+  expect(request.searchParams.get('key')).toBe('secret');
+  await getLiveEpg(source.key, 'opaque-123');
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(db.saveAdminConfig).not.toHaveBeenCalled();
+});
+
+it('finds DIYP programmes by channel name when the M3U has no tvg-id', async () => {
+  jest
+    .mocked(getConfig)
+    .mockResolvedValue({
+      LiveConfig: [source],
+      EpgConfig: [
+        { key: 'json', name: 'JSON', url: 'https://epg.test/api/diyp/' },
+      ],
+    } as AdminConfig);
+  jest
+    .mocked(fetch)
+    .mockImplementation(
+      async (input) =>
+        new Response(
+          String(input) === source.url
+            ? '#EXTM3U\n#EXTINF:-1,CCTV-1(720p)\nhttps://media.test/live.m3u8'
+            : JSON.stringify({
+                date: beijingEpgDate(),
+                epg_data: [
+                  { start: '19:00', end: '19:30', title: '无标识频道节目' },
+                ],
+              })
+        )
+    );
+  const guide = await getLiveEpg(source.key, 'CCTV-1(720p)');
+  expect(guide?.epgs['CCTV-1(720p)'][0].title).toBe('无标识频道节目');
+  expect(
+    new URL(String(jest.mocked(fetch).mock.calls[1][0])).searchParams.get('ch')
+  ).toBe('CCTV1');
+});
+
+it('falls back from DIYP placeholder schedules to XMLTV and refreshes a cached API guide after Beijing midnight', async () => {
+  const clock = jest
+    .spyOn(Date, 'now')
+    .mockReturnValue(Date.parse('2026-10-17T15:59:59Z'));
+  const guides = [
+    { key: 'json', name: 'JSON', url: 'https://epg.test/api/diyp/' },
+    { key: 'xml', name: 'XML', url: 'https://epg.test/guide.xml' },
+  ];
+  jest
+    .mocked(getConfig)
+    .mockResolvedValue({
+      LiveConfig: [source],
+      EpgConfig: guides,
+    } as AdminConfig);
+  let placeholder = true;
+  jest
+    .mocked(fetch)
+    .mockImplementation(
+      async (input) =>
+        new Response(
+          String(input) === source.url
+            ? '#EXTM3U\n#EXTINF:-1 tvg-id="CCTV1",CCTV1\nhttps://media.test/live.m3u8'
+            : String(input).includes('guide.xml')
+            ? '<tv><programme channel="CCTV1" start="20261017190000 +0800" stop="20261017193000 +0800"><title>XML兜底</title></programme></tv>'
+            : JSON.stringify({
+                date: beijingEpgDate(),
+                epg_data: [
+                  {
+                    start: '19:00',
+                    end: '19:30',
+                    title: placeholder
+                      ? '精彩节目-暂未提供节目预告信息'
+                      : '新一天节目',
+                  },
+                ],
+              })
+        )
+    );
+  try {
+    expect((await getLiveEpg(source.key, 'CCTV1'))?.epgs.CCTV1[0].title).toBe(
+      'XML兜底'
+    );
+    placeholder = false;
+    clock.mockReturnValue(Date.parse('2026-10-17T16:00:01Z'));
+    expect((await getLiveEpg(source.key, 'CCTV1'))?.epgs.CCTV1[0].title).toBe(
+      '新一天节目'
+    );
+    expect(fetch).toHaveBeenCalledTimes(4);
+  } finally {
+    clock.mockRestore();
   }
 });

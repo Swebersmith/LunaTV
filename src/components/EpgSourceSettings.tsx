@@ -101,9 +101,10 @@ export default function EpgSourceSettings({
         </button>
       </div>
       <p className='text-sm leading-6 text-gray-600 dark:text-gray-300'>
-        支持 XMLTV（.xml / .xml.gz）。所有直播源均可共用，节目单按频道的 tvg-id
-        匹配。直播源单独填写的节目单地址优先，其次按下方顺序补充，最后使用 M3U
-        自带的节目单。
+        支持 XMLTV（.xml / .xml.gz）与 DIYP（JSON）节目单。DIYP 可直接填写
+        /api/diyp/ 接口地址，自动按频道名和北京时间查询当天节目；XMLTV 按 tvg-id
+        匹配。所有直播源均可共用，直播源单独填写的地址优先，其次按下方顺序补充，
+        最后使用 M3U 自带的节目单。
       </p>
       {error && (
         <p

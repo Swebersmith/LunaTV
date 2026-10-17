@@ -68,7 +68,7 @@ export default function SourceEditor({
       ? [
           {
             key: 'url' as const,
-            label: 'XMLTV 节目单地址',
+            label: '节目单地址（XMLTV / DIYP）',
             required: true,
             url: true,
           },

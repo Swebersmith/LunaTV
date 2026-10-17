@@ -493,12 +493,12 @@ function LivePageClient() {
   // Optional programme data loads independently and cannot overwrite a newer channel.
   useEffect(() => {
     setEpgData(null);
-    if (!currentChannel?.tvgId || !currentSource) { setIsEpgLoading(false); return; }
+    if (!currentChannel || !currentSource) { setIsEpgLoading(false); return; }
     const controller = new AbortController();
     let active = true;
     const timer = setTimeout(() => controller.abort(), 20000);
     setIsEpgLoading(true);
-    const query = new URLSearchParams({ source: currentSource.key, tvgId: currentChannel.tvgId });
+    const query = new URLSearchParams({ source: currentSource.key, tvgId: currentChannel.tvgId || currentChannel.name });
     void fetch('/api/live/epg?' + query, { signal: controller.signal, cache: 'no-store' }).then(async response => {
       if (!response.ok) return;
       const result = await response.json();
