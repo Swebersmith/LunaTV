@@ -1,4 +1,10 @@
-import { useCallback, useRef } from 'react';
+import {
+  MouseEvent,
+  PointerEvent,
+  useCallback,
+  useEffect,
+  useRef,
+} from 'react';
 
 interface UseLongPressOptions {
   onLongPress: () => void;
@@ -7,140 +13,96 @@ interface UseLongPressOptions {
   moveThreshold?: number;
 }
 
-interface TouchPosition {
-  x: number;
-  y: number;
-}
-
 export const useLongPress = ({
   onLongPress,
   onClick,
   longPressDelay = 500,
   moveThreshold = 10,
 }: UseLongPressOptions) => {
-  const isLongPress = useRef(false);
-  const pressTimer = useRef<NodeJS.Timeout | null>(null);
-  const startPosition = useRef<TouchPosition | null>(null);
-  const isActive = useRef(false); // 防止重复触发
-  const wasButton = useRef(false); // 记录触摸开始时是否是按钮
-
-  const clearTimer = useCallback(() => {
-    if (pressTimer.current) {
-      clearTimeout(pressTimer.current);
-      pressTimer.current = null;
-    }
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const active = useRef<{ id: number; x: number; y: number } | null>(null);
+  const suppressClick = useRef(false);
+  const clear = useCallback(() => {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+    active.current = null;
   }, []);
+  useEffect(() => clear, [clear]);
 
-  const handleStart = useCallback(
-    (clientX: number, clientY: number, isButton = false) => {
-      // 如果已经有活跃的手势，忽略新的开始
-      if (isActive.current) {
-        return;
-      }
-
-      isActive.current = true;
-      isLongPress.current = false;
-      startPosition.current = { x: clientX, y: clientY };
-
-      // 记录触摸开始时是否是按钮
-      wasButton.current = isButton;
-
-      pressTimer.current = setTimeout(() => {
-        // 再次检查是否仍然活跃
-        if (!isActive.current) return;
-
-        isLongPress.current = true;
-
-        if (navigator.vibrate) {
-          navigator.vibrate(50);
-        }
-
-        // 触发长按事件
-        onLongPress();
-      }, longPressDelay);
-    },
-    [onLongPress, longPressDelay]
-  );
-
-  const handleMove = useCallback(
-    (clientX: number, clientY: number) => {
-      if (!startPosition.current || !isActive.current) return;
-
-      const distance = Math.sqrt(
-        Math.pow(clientX - startPosition.current.x, 2) +
-        Math.pow(clientY - startPosition.current.y, 2)
-      );
-
-      // 如果移动距离超过阈值，取消长按
-      if (distance > moveThreshold) {
-        clearTimer();
-        isActive.current = false;
-      }
-    },
-    [clearTimer, moveThreshold]
-  );
-
-  const handleEnd = useCallback(() => {
-    clearTimer();
-
-    // 根据情况决定是否触发点击事件：
-    // 1. 如果是长按，不触发点击
-    // 2. 如果不是长按且触摸开始时是按钮，不触发点击
-    // 3. 否则触发点击
-    const shouldClick = !isLongPress.current && !wasButton.current && onClick && isActive.current;
-
-    if (shouldClick) {
-      onClick();
-    }
-
-    // 重置所有状态
-    isLongPress.current = false;
-    startPosition.current = null;
-    isActive.current = false;
-    wasButton.current = false;
-  }, [clearTimer, onClick]);
-
-  // 触摸事件处理器
-  const onTouchStart = useCallback(
-    (e: React.TouchEvent) => {
-      // 检查是否触摸的是按钮或其他交互元素
-      const target = e.target as HTMLElement;
-      const buttonElement = target.closest('[data-button]');
-
-      // 更精确的按钮检测：只有当触摸目标直接是按钮元素或其直接子元素时才认为是按钮
-      const isDirectButton = target.hasAttribute('data-button');
-      const isButton = !!buttonElement && isDirectButton;
-
-      // 阻止默认的长按行为，但不阻止触摸开始事件
-      const touch = e.touches[0];
-      handleStart(touch.clientX, touch.clientY, !!isButton);
-    },
-    [handleStart]
-  );
-
-  const onTouchMove = useCallback(
-    (e: React.TouchEvent) => {
-      const touch = e.touches[0];
-      handleMove(touch.clientX, touch.clientY);
-    },
-    [handleMove]
-  );
-
-  const onTouchEnd = useCallback(
-    (e: React.TouchEvent) => {
-      // 始终阻止默认行为，避免任何系统长按菜单
-      e.preventDefault();
-      e.stopPropagation();
-      handleEnd();
-    },
-    [handleEnd]
-  );
-
-
+  const isControl = (
+    event: MouseEvent<HTMLElement> | PointerEvent<HTMLElement>
+  ) => {
+    const control = (event.target as Element).closest(
+      'a, button, input, select, textarea, [role="button"], [data-button]'
+    );
+    return !!control && control !== event.currentTarget;
+  };
 
   return {
-    onTouchStart,
-    onTouchMove,
-    onTouchEnd,
+    onPointerDown: (event: PointerEvent<HTMLElement>) => {
+      clear();
+      suppressClick.current = false;
+      if (event.isPrimary === false) {
+        suppressClick.current = true;
+        return;
+      }
+      if (
+        event.pointerType === 'mouse' ||
+        event.button !== 0 ||
+        isControl(event)
+      )
+        return;
+      active.current = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+      };
+      timer.current = setTimeout(() => {
+        if (!active.current) return;
+        suppressClick.current = true;
+        onLongPress();
+        try {
+          navigator.vibrate?.(50);
+        } catch {
+          /* Haptics are optional. */
+        }
+      }, longPressDelay);
+    },
+    onPointerMove: (event: PointerEvent<HTMLElement>) => {
+      const start = active.current;
+      if (!start || start.id !== event.pointerId) return;
+      if (
+        Math.hypot(event.clientX - start.x, event.clientY - start.y) >
+        moveThreshold
+      ) {
+        suppressClick.current = true;
+        clear();
+      }
+    },
+    onPointerUp: (event: PointerEvent<HTMLElement>) => {
+      if (active.current?.id === event.pointerId) clear();
+    },
+    onPointerCancel: () => {
+      suppressClick.current = true;
+      clear();
+    },
+    onPointerLeave: () => {
+      if (!active.current) return;
+      suppressClick.current = true;
+      clear();
+    },
+    onClick: (event: MouseEvent<HTMLElement>) => {
+      if (isControl(event)) return;
+      // Normal taps use the browser's single click. Consume only the click
+      // produced by a long press/drag; keyboard activation remains available.
+      if (suppressClick.current && event.detail !== 0) {
+        suppressClick.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      suppressClick.current = false;
+      onClick?.();
+    },
   };
 };

@@ -28,9 +28,13 @@ function cancelNavigation() {
 }
 
 function beginNavigation(href: string) {
-  cancelNavigation();
   const from = window.location.pathname + window.location.search;
-  if (href === from) return;
+  if (href === from) {
+    cancelNavigation();
+    return true;
+  }
+  if (pending?.href === href && pending.from === from) return false;
+  cancelNavigation();
   pending = {
     href,
     from,
@@ -43,6 +47,20 @@ function beginNavigation(href: string) {
     }, 8000),
   };
   notify();
+  return true;
+}
+
+export function navigateWithFallback(
+  href: string,
+  push: (href: string) => void
+) {
+  if (!beginNavigation(href)) return;
+  try {
+    push(href);
+  } catch {
+    cancelNavigation();
+    window.location.assign(href);
+  }
 }
 
 type Props = Omit<ComponentProps<typeof Link>, 'href'> & { href: string };
@@ -85,8 +103,8 @@ export default function NavigationLink({
           props.download
         )
           return;
-        cancelNavigation();
         if (pathname === '/douban' && href.startsWith('/douban?')) {
+          cancelNavigation();
           event.preventDefault();
           if (window.location.pathname + window.location.search !== href)
             window.history.pushState(null, '', href);
@@ -94,7 +112,7 @@ export default function NavigationLink({
           if (props.scroll !== false) window.scrollTo(0, 0);
           return;
         }
-        beginNavigation(href);
+        if (!beginNavigation(href)) event.preventDefault();
       }}
     >
       {children}

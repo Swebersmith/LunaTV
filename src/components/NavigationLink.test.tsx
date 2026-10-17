@@ -17,7 +17,9 @@ jest.mock('next/link', () => ({
     children,
     prefetch: _prefetch,
     ...props
-  }: AnchorHTMLAttributes<HTMLAnchorElement> & { prefetch?: boolean | null }) => (
+  }: AnchorHTMLAttributes<HTMLAnchorElement> & {
+    prefetch?: boolean | null;
+  }) => (
     <a
       {...props}
       href={href}
@@ -38,6 +40,11 @@ beforeEach(() => {
   mockPath = '/douban';
   window.history.replaceState(null, '', '/douban?type=movie');
   jest.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
+  // Reset shared navigation state through its public browser event, even when
+  // the previous test unmounted its progress observer before cleanup ran.
+  const reset = render(<NavigationProgress />);
+  act(() => window.dispatchEvent(new PopStateEvent('popstate')));
+  reset.unmount();
 });
 afterEach(() => {
   act(() => window.dispatchEvent(new PopStateEvent('popstate')));
@@ -102,4 +109,33 @@ it('allows clicking an already active category to retry without duplicating brow
   expect(retry).toHaveBeenCalledTimes(1);
   expect(history).not.toHaveBeenCalled();
   window.removeEventListener('category-reselect', retry);
+});
+
+it('does not restart the recovery deadline or issue duplicate pushes when a link is clicked repeatedly', () => {
+  mockPath = '/';
+  window.history.replaceState(null, '', '/');
+  render(<NavigationLink href='/play?title=test'>播放</NavigationLink>);
+  fireEvent.click(screen.getByRole('link'));
+  act(() => jest.advanceTimersByTime(3000));
+  fireEvent.click(screen.getByRole('link'));
+  expect(mockPush).toHaveBeenCalledTimes(1);
+  expect(jest.getTimerCount()).toBe(1);
+});
+
+it('cancels an outstanding recovery when the user chooses the current page', () => {
+  mockPath = '/';
+  window.history.replaceState(null, '', '/');
+  render(
+    <>
+      <NavigationLink href='/play?title=test'>播放</NavigationLink>
+      <NavigationLink href='/'>首页</NavigationLink>
+      <NavigationProgress />
+    </>
+  );
+  fireEvent.click(screen.getByRole('link', { name: '播放' }));
+  expect(jest.getTimerCount()).toBe(1);
+  fireEvent.click(screen.getByRole('link', { name: '首页' }));
+  expect(jest.getTimerCount()).toBe(0);
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(mockPush).toHaveBeenLastCalledWith('/');
 });

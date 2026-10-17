@@ -2,7 +2,7 @@
 
 import { ExternalLink, Heart, Link, PlayCircleIcon, Radio, Trash2 } from 'lucide-react';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import React, {
   forwardRef,
   memo,
@@ -26,6 +26,7 @@ import { useLongPress } from '@/hooks/useLongPress';
 
 import { ImagePlaceholder } from '@/components/ImagePlaceholder';
 import MobileActionSheet from '@/components/MobileActionSheet';
+import NavigationLink, { navigateWithFallback } from '@/components/NavigationLink';
 
 export interface VideoCardProps {
   id?: string;
@@ -55,9 +56,6 @@ export type VideoCardHandle = {
   setDoubanId: (id?: number) => void;
 };
 
-const getReturnToQuery = () =>
-  `&returnTo=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`;
-
 const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard(
   {
     id,
@@ -83,6 +81,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   ref
 ) {
   const router = useRouter();
+  const pathname = usePathname() || '/';
+  const search = useSearchParams()?.toString() || '';
   const [favorited, setFavorited] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showMobileActions, setShowMobileActions] = useState(false);
@@ -128,6 +128,28 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   const actualSearchType = isAggregate
     ? (actualEpisodes && actualEpisodes === 1 ? 'movie' : 'tv')
     : type;
+
+  const playHref = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set('returnTo', pathname + (search ? '?' + search : ''));
+    if (origin === 'live') {
+      if (actualSource) params.set('source', actualSource.replace(/^live_/, ''));
+      if (actualId) params.set('id', actualId.replace(/^live_/, ''));
+      return '/live?' + params;
+    }
+    const lookup = from === 'douban' || !actualSource || !actualId;
+    if (lookup && !actualTitle.trim()) return null;
+    if (!lookup && actualSource && actualId) {
+      params.set('source', actualSource);
+      params.set('id', actualId);
+    }
+    params.set('title', lookup ? actualTitle.trim() : actualTitle);
+    if (actualYear) params.set('year', actualYear);
+    if (actualSearchType) params.set('stype', actualSearchType);
+    if (isAggregate) params.set('prefer', 'true');
+    if (actualQuery.trim()) params.set('stitle', actualQuery.trim());
+    return '/play?' + params;
+  }, [pathname, search, origin, from, actualSource, actualId, actualTitle, actualYear, actualSearchType, isAggregate, actualQuery]);
 
   // 获取收藏状态（搜索结果页面不检查）
   useEffect(() => {
@@ -226,67 +248,12 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   );
 
   const handleClick = useCallback(() => {
-    const returnTo = getReturnToQuery();
+    if (playHref) navigateWithFallback(playHref, (href) => router.push(href));
+  }, [playHref, router]);
 
-    if (origin === 'live' && actualSource && actualId) {
-      // 直播内容跳转到直播页面
-      const url = `/live?source=${actualSource.replace('live_', '')}&id=${actualId.replace('live_', '')}${returnTo}`;
-      router.push(url);
-    } else if (from === 'douban' || (isAggregate && !actualSource && !actualId)) {
-      const url = `/play?title=${encodeURIComponent(actualTitle.trim())}${actualYear ? `&year=${actualYear}` : ''
-        }${actualSearchType ? `&stype=${actualSearchType}` : ''}${isAggregate ? '&prefer=true' : ''}${actualQuery ? `&stitle=${encodeURIComponent(actualQuery.trim())}` : ''}${returnTo}`;
-      router.push(url);
-    } else if (actualSource && actualId) {
-      const url = `/play?source=${actualSource}&id=${actualId}&title=${encodeURIComponent(
-        actualTitle
-      )}${actualYear ? `&year=${actualYear}` : ''}${isAggregate ? '&prefer=true' : ''
-        }${actualQuery ? `&stitle=${encodeURIComponent(actualQuery.trim())}` : ''
-        }${actualSearchType ? `&stype=${actualSearchType}` : ''}${returnTo}`;
-      router.push(url);
-    }
-  }, [
-    origin,
-    from,
-    actualSource,
-    actualId,
-    router,
-    actualTitle,
-    actualYear,
-    isAggregate,
-    actualQuery,
-    actualSearchType,
-  ]);
-
-  // 新标签页播放处理函数
   const handlePlayInNewTab = useCallback(() => {
-    const returnTo = getReturnToQuery();
-
-    if (origin === 'live' && actualSource && actualId) {
-      // 直播内容跳转到直播页面
-      const url = `/live?source=${actualSource.replace('live_', '')}&id=${actualId.replace('live_', '')}${returnTo}`;
-      window.open(url, '_blank');
-    } else if (from === 'douban' || (isAggregate && !actualSource && !actualId)) {
-      const url = `/play?title=${encodeURIComponent(actualTitle.trim())}${actualYear ? `&year=${actualYear}` : ''}${actualSearchType ? `&stype=${actualSearchType}` : ''}${isAggregate ? '&prefer=true' : ''}${actualQuery ? `&stitle=${encodeURIComponent(actualQuery.trim())}` : ''}${returnTo}`;
-      window.open(url, '_blank');
-    } else if (actualSource && actualId) {
-      const url = `/play?source=${actualSource}&id=${actualId}&title=${encodeURIComponent(
-        actualTitle
-      )}${actualYear ? `&year=${actualYear}` : ''}${isAggregate ? '&prefer=true' : ''
-        }${actualQuery ? `&stitle=${encodeURIComponent(actualQuery.trim())}` : ''
-        }${actualSearchType ? `&stype=${actualSearchType}` : ''}${returnTo}`;
-      window.open(url, '_blank');
-    }
-  }, [
-    origin,
-    from,
-    actualSource,
-    actualId,
-    actualTitle,
-    actualYear,
-    isAggregate,
-    actualQuery,
-    actualSearchType,
-  ]);
+    if (playHref) window.open(playHref, '_blank', 'noopener,noreferrer');
+  }, [playHref]);
 
   // 检查搜索结果的收藏状态
   const checkSearchFavoriteStatus = useCallback(async () => {
@@ -316,7 +283,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   // 长按手势hook
   const longPressProps = useLongPress({
     onLongPress: handleLongPress,
-    onClick: handleClick, // 保持点击播放功能
     longPressDelay: 500,
   });
 
@@ -504,7 +470,6 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
       <div
         className='group relative min-w-0 w-full rounded-lg bg-transparent cursor-pointer transition-all duration-300 ease-in-out hover:scale-[1.05] hover:z-[500]'
         onClick={handleClick}
-        {...longPressProps}
         style={{
           // 禁用所有默认的长按和选择效果
           WebkitUserSelect: 'none',
@@ -537,6 +502,24 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
           return false;
         }}
       >
+        {playHref && (
+          <NavigationLink
+            href={playHref}
+            prefetch={false}
+            aria-label={`播放 ${actualTitle}`}
+            title={actualTitle}
+            className='video-card-play-link group/play absolute inset-0 z-10 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-red-500'
+            {...longPressProps}
+            onClick={(event) => {
+              longPressProps.onClick(event);
+              event.stopPropagation();
+            }}
+          >
+            <span className='pointer-events-none absolute inset-0 hidden items-center justify-center rounded-lg bg-black/45 text-sm font-medium text-white group-aria-busy/play:flex'>
+              正在打开…
+            </span>
+          </NavigationLink>
+        )}
         {/* 海报容器 */}
         <div
           className={`crayon-video-poster relative aspect-[2/3] overflow-hidden rounded-lg ${origin === 'live' ? 'ring-1 ring-gray-300/80 dark:ring-gray-600/80' : ''}`}
@@ -605,8 +588,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
           {/* 播放按钮 */}
           {config.showPlayButton && (
             <div
-              data-button="true"
-              className='absolute inset-0 flex items-center justify-center opacity-0 transition-all duration-300 ease-in-out delay-75 group-hover:opacity-100 group-hover:scale-100'
+              className='pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 transition-all duration-300 ease-in-out delay-75 group-hover:opacity-100 group-hover:scale-100'
               style={{
                 WebkitUserSelect: 'none',
                 userSelect: 'none',
@@ -638,7 +620,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
           {(config.showHeart || config.showCheckCircle) && (
             <div
               data-button="true"
-              className='absolute bottom-3 right-3 flex gap-3 opacity-0 translate-y-2 transition-all duration-300 ease-in-out sm:group-hover:opacity-100 sm:group-hover:translate-y-0'
+              className='video-card-actions invisible pointer-events-none absolute bottom-3 right-3 z-20 flex gap-3 opacity-0 translate-y-2 transition-all duration-300 ease-in-out sm:group-hover:opacity-100 sm:group-hover:translate-y-0 group-has-[:focus-visible]:visible group-has-[:focus-visible]:pointer-events-auto group-has-[:focus-visible]:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:group-hover:visible [@media(hover:hover)_and_(pointer:fine)]:group-hover:pointer-events-auto'
               style={{
                 WebkitUserSelect: 'none',
                 userSelect: 'none',
@@ -650,8 +632,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
               }}
             >
               {config.showCheckCircle && (
+                <button type='button' aria-label='删除播放记录' onClick={handleDeleteRecord}>
                 <Trash2
-                  onClick={handleDeleteRecord}
                   size={20}
                   className='text-white transition-all duration-300 ease-out hover:stroke-red-500 hover:scale-[1.1]'
                   style={{
@@ -664,10 +646,11 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
                     return false;
                   }}
                 />
+                </button>
               )}
               {config.showHeart && from !== 'search' && (
+                <button type='button' aria-label={favorited ? '取消收藏' : '添加收藏'} onClick={handleToggleFavorite}>
                 <Heart
-                  onClick={handleToggleFavorite}
                   size={20}
                   className={`transition-all duration-300 ease-out ${favorited
                     ? 'fill-red-600 stroke-red-600'
@@ -683,6 +666,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
                     return false;
                   }}
                 />
+                </button>
               )}
             </div>
           )}
@@ -753,7 +737,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
               target='_blank'
               rel='noopener noreferrer'
               onClick={(e) => e.stopPropagation()}
-              className='absolute top-2 left-2 opacity-0 -translate-x-2 transition-all duration-300 ease-in-out delay-100 sm:group-hover:opacity-100 sm:group-hover:translate-x-0'
+              className='video-card-actions invisible pointer-events-none absolute top-2 left-2 z-20 opacity-0 -translate-x-2 transition-all duration-300 ease-in-out delay-100 sm:group-hover:opacity-100 sm:group-hover:translate-x-0 group-has-[:focus-visible]:visible group-has-[:focus-visible]:pointer-events-auto group-has-[:focus-visible]:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:group-hover:visible [@media(hover:hover)_and_(pointer:fine)]:group-hover:pointer-events-auto'
               style={{
                 WebkitUserSelect: 'none',
                 userSelect: 'none',
@@ -796,7 +780,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
 
             return (
               <div
-                className='absolute bottom-2 right-2 opacity-0 transition-all duration-300 ease-in-out delay-75 sm:group-hover:opacity-100'
+                className='absolute bottom-2 right-2 z-20 opacity-0 transition-all duration-300 ease-in-out delay-75 sm:group-hover:opacity-100 pointer-events-none [@media(hover:hover)_and_(pointer:fine)]:group-hover:pointer-events-auto'
                 style={{
                   WebkitUserSelect: 'none',
                   userSelect: 'none',
