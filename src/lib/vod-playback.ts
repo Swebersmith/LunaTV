@@ -1,17 +1,6 @@
 import Hls from 'hls.js';
 
-import { vodAdPlaylistLoader, VodAdRange } from './vod-ad-filter';
-import { toVodContentTime, toVodSourceTime } from './vod-ad-rewrite';
-
-const timelines = new WeakMap<HTMLVideoElement, VodAdRange[]>();
-
-export function vodSourceTime(video: HTMLVideoElement, time: number) {
-  return toVodSourceTime(time, timelines.get(video) || []);
-}
-
-export function vodContentTime(video: HTMLVideoElement, time: number) {
-  return toVodContentTime(time, timelines.get(video) || []);
-}
+import { vodAdLoader } from './vod-ad-filter';
 
 declare global {
   interface HTMLVideoElement {
@@ -27,7 +16,6 @@ export function attachVodHls(
 ): Hls | null {
   video.hls?.destroy();
   delete video.hls;
-  timelines.delete(video);
 
   if (!Hls.isSupported()) {
     if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = url;
@@ -45,15 +33,11 @@ export function attachVodHls(
     backBufferLength: 30,
     maxBufferSize: 60 * 1000 * 1000,
     maxBufferHole: 0.3,
-    enableInterstitialPlayback: !blockAds,
-    // Join retained segments on a shortened timeline; no currentTime ad jumps.
-    ...(blockAds && {
-      pLoader: vodAdPlaylistLoader(Hls.DefaultConfig.loader, (ranges) => {
-        timelines.set(video, ranges);
-      }),
-    }),
+    // Restore the original player's manifest/level filtering loader.
+    loader: blockAds
+      ? vodAdLoader(Hls.DefaultConfig.loader)
+      : Hls.DefaultConfig.loader,
   });
-  hls.on(Hls.Events.DESTROYING, () => timelines.delete(video));
   video.hls = hls;
   hls.loadSource(url);
   hls.attachMedia(video);

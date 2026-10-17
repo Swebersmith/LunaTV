@@ -7,7 +7,7 @@ import type {
 } from 'hls.js';
 import Hls from 'hls.js';
 
-import { attachVodHls, vodContentTime, vodSourceTime } from './vod-playback';
+import { attachVodHls } from './vod-playback';
 
 let video: HTMLVideoElement;
 let unsupported: jest.Mock;
@@ -36,7 +36,8 @@ function playFixture(playlist: string, blockAds = true) {
         parsed = data;
       });
       // Run the real playlist loader/parser, replacing only HTTP transport.
-      const prototype = this.config.loader.prototype as Loader<LoaderContext>;
+      const prototype = Hls.DefaultConfig.loader
+        .prototype as Loader<LoaderContext>;
       const load = jest
         .spyOn(prototype, 'load')
         .mockImplementation(function (
@@ -68,7 +69,7 @@ function playFixture(playlist: string, blockAds = true) {
 }
 
 it.each([true, false])(
-  'preserves normal timestamp boundaries with ad blocking set to %s',
+  'uses the original discontinuity filtering with ad blocking set to %s',
   (blockAds) => {
     const playlist = [
       '#EXTM3U',
@@ -87,9 +88,9 @@ it.each([true, false])(
     ].join('\n');
     const { hls, parsed } = playFixture(playlist, blockAds);
     expect(hls).toBe(video.hls);
-    expect(parsed?.details.fragments.map((fragment) => fragment.cc)).toEqual([
-      7, 8, 9,
-    ]);
+    expect(parsed?.details.fragments.map((fragment) => fragment.cc)).toEqual(
+      blockAds ? [0, 0, 0] : [7, 8, 9]
+    );
     expect(parsed?.details.totalduration).toBe(18);
     expect(parsed?.details.live).toBe(false);
     expect(unsupported).not.toHaveBeenCalled();
@@ -97,7 +98,7 @@ it.each([true, false])(
 );
 
 it.each([true, false])(
-  'joins encrypted program segments without ad seeks and preserves their IVs with blocking set to %s',
+  'keeps original segment timing and encryption without ad seeks with blocking set to %s',
   (blockAds) => {
     const playlist = [
       '#EXTM3U',
@@ -120,21 +121,14 @@ it.each([true, false])(
     ].join('\n');
     const { hls, parsed } = playFixture(playlist, blockAds);
     const fragments = parsed?.details.fragments || [];
-    expect(hls?.config.enableInterstitialPlayback).toBe(!blockAds);
-    expect(fragments.map((fragment) => fragment.sn)).toEqual(
-      blockAds ? [20, 21] : [20, 21, 22, 23]
-    );
+    expect(fragments.map((fragment) => fragment.sn)).toEqual([20, 21, 22, 23]);
     expect(fragments.map((fragment) => fragment.cc)).toEqual(
-      blockAds ? [7, 8] : [7, 8, 8, 9]
+      blockAds ? [0, 0, 0, 0] : [7, 8, 8, 9]
     );
     expect(fragments.every((fragment) => !fragment.gap)).toBe(true);
     expect(fragments[fragments.length - 1].decryptdata?.iv?.[15]).toBe(23);
-    expect(parsed?.details.totalduration).toBeCloseTo(blockAds ? 12 : 17.04);
-    expect(fragments[fragments.length - 1].start).toBeCloseTo(
-      blockAds ? 6 : 11.04
-    );
-    expect(vodSourceTime(video, 7)).toBeCloseTo(blockAds ? 12.04 : 7);
-    expect(vodContentTime(video, 12.04)).toBeCloseTo(blockAds ? 7 : 12.04);
+    expect(parsed?.details.totalduration).toBeCloseTo(17.04);
+    expect(fragments[fragments.length - 1].start).toBeCloseTo(11.04);
     Object.defineProperty(video, 'duration', {
       configurable: true,
       value: 17.04,
@@ -146,7 +140,6 @@ it.each([true, false])(
     video.currentTime = 7;
     video.dispatchEvent(new Event('timeupdate'));
     expect(video.currentTime).toBe(7);
-    expect(vodSourceTime(video, 7)).toBe(7);
   }
 );
 
@@ -170,7 +163,7 @@ it('releases the previous episode before loading and attaching the next one', ()
   expect(second.config.backBufferLength).toBeLessThanOrEqual(30);
 });
 
-it('keeps rotated keys and fMP4 initialization maps on the joined program boundary', () => {
+it('retains original fragments, rotated keys and fMP4 maps', () => {
   const { parsed } = playFixture(
     [
       '#EXTM3U',
@@ -196,13 +189,14 @@ it('keeps rotated keys and fMP4 initialization maps on the joined program bounda
   const fragments = parsed?.details.fragments || [];
   expect(fragments.map((fragment) => fragment.relurl)).toEqual([
     'before.m4s',
+    '/video/adjump/time/ad.ts',
     'after.m4s',
   ]);
-  expect(fragments[1].start).toBe(6);
-  expect(fragments[1].initSegment?.relurl).toBe('after-init.mp4');
-  expect(fragments[1].initSegment?.cc).toBe(fragments[1].cc);
-  expect(fragments[1].decryptdata?.uri).toBe('https://media.test/program.key');
-  expect(fragments[1].decryptdata?.iv?.[15]).toBe(2);
+  expect(fragments[2].start).toBe(9);
+  expect(fragments[2].initSegment?.relurl).toBe('after-init.mp4');
+  expect(fragments[2].initSegment?.cc).toBe(fragments[2].cc);
+  expect(fragments[2].decryptdata?.uri).toBe('https://media.test/program.key');
+  expect(fragments[2].decryptdata?.iv?.[15]).toBe(2);
 });
 
 it('falls back to native HLS on Safari without constructing an unsupported engine', () => {
