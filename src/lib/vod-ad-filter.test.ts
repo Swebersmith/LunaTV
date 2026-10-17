@@ -48,16 +48,16 @@ it('preserves CRLF, encrypted IV/sequence state, byte ranges and init maps', () 
   expect(marked.playlist.replace(/^#EXT-X-GAP\r\n/gm, '')).toBe(original);
 });
 
-it('leaves ordinary discontinuities, unknown paths, query parameters and other origins alone', () => {
+it('leaves ordinary discontinuities, unknown paths, query parameters and CDN switches alone', () => {
   const original = playlist().replace(
     /\/video\/adjump\/time\/ad\d+\.ts/g,
-    'https://other.test/video/adjump/time/ad.ts'
+    'https://other.test/program/scene.ts'
   );
   expect(markVodAds(original, url)).toEqual({ playlist: original, ranges: [] });
   for (const replacement of [
     'main-ad.ts',
     'main.ts?next=/video/adjump/time/ad.ts',
-    '/ads/scene.ts',
+    '/downloads/scene.ts',
   ]) {
     const normal = playlist().replace(
       /\/video\/adjump\/time\/ad\d+\.ts/g,

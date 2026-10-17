@@ -120,6 +120,7 @@ it.each([true, false])(
     ].join('\n');
     const { hls, parsed } = playFixture(playlist, blockAds);
     const fragments = parsed?.details.fragments || [];
+    expect(hls?.config.enableInterstitialPlayback).toBe(!blockAds);
     expect(fragments.map((fragment) => fragment.sn)).toEqual([20, 21, 22, 23]);
     expect(fragments.map((fragment) => fragment.cc)).toEqual([7, 8, 8, 9]);
     expect(fragments.map((fragment) => !!fragment.gap)).toEqual([

@@ -35,7 +35,8 @@ export function attachVodHls(
     backBufferLength: 30,
     maxBufferSize: 60 * 1000 * 1000,
     maxBufferHole: 0.3,
-    // Preserve timestamp boundaries while skipping only confirmed ad URIs.
+    enableInterstitialPlayback: !blockAds,
+    // Preserve timeline boundaries while filtering ad markers and segment groups.
     ...(blockAds && {
       pLoader: vodAdPlaylistLoader(Hls.DefaultConfig.loader, (ranges) => {
         adRanges = ranges;

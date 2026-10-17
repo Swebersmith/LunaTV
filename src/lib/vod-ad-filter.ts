@@ -5,26 +5,9 @@ import type {
   PlaylistLoaderContext,
 } from 'hls.js';
 
-export interface VodAdRange {
-  start: number;
-  end: number;
-}
+import { analyzeVodAds, VodAdRange } from './vod-ad-detection';
 
-// Confirmed in Fengbao/Baofeng VOD playlists. Match the URI path, never
-// a query-string substring or a generic discontinuity between normal scenes.
-function isKnownAd(uri: string, playlistUrl: string) {
-  try {
-    const base = new URL(playlistUrl);
-    const url = new URL(uri, base);
-    return (
-      /^https?:$/.test(url.protocol) &&
-      url.origin === base.origin &&
-      /^\/video\/adjump\/time\/[\w-]+\.ts$/.test(url.pathname)
-    );
-  } catch {
-    return false;
-  }
-}
+export type { VodAdRange } from './vod-ad-detection';
 
 export function markVodAds(playlist: string, playlistUrl: string) {
   const ranges: VodAdRange[] = [];
@@ -37,36 +20,41 @@ export function markVodAds(playlist: string, playlistUrl: string) {
     return { playlist, ranges };
 
   const lines = playlist.split('\n');
+  let parsed: ReturnType<typeof analyzeVodAds>;
+  try {
+    parsed = analyzeVodAds(lines, playlistUrl);
+  } catch {
+    return { playlist, ranges };
+  }
+  const analysis = parsed;
+  if (!analysis) return { playlist, ranges };
   const output: string[] = [];
   const gap = playlist.includes('\r\n') ? '#EXT-X-GAP\r' : '#EXT-X-GAP';
-  let time = 0;
-  let duration = 0;
-  let hasGap = false;
-  for (const line of lines) {
-    const text = line.trim();
-    if (text.startsWith('#EXTINF:')) {
-      duration = Number(text.slice(8).split(',')[0]);
-    } else if (text === '#EXT-X-GAP') {
-      hasGap = true;
-    } else if (text && !text.startsWith('#')) {
-      if (!Number.isFinite(duration) || duration <= 0)
-        return { playlist, ranges: [] as VodAdRange[] };
-      if (isKnownAd(text, playlistUrl)) {
-        if (!hasGap) output.push(gap);
-        const previous = ranges[ranges.length - 1];
-        if (previous && Math.abs(previous.end - time) < 0.001)
-          previous.end = time + duration;
-        else ranges.push({ start: time, end: time + duration });
-      }
-      time += duration;
-      duration = 0;
-      hasGap = false;
-    }
-    output.push(line);
+  const gapLines = new Set(
+    analysis.segments
+      .filter(
+        (segment) =>
+          !segment.hasGap &&
+          analysis.ranges.some(
+            (range) =>
+              segment.start >= range.start - 0.001 &&
+              segment.end <= range.end + 0.001
+          )
+      )
+      .map((segment) => segment.line)
+  );
+  for (let index = 0; index < lines.length; index++) {
+    if (analysis.removeLines.has(index)) continue;
+    if (gapLines.has(index)) output.push(gap);
+    output.push(lines[index]);
   }
   // Keep URIs, sequence numbers, encryption IVs, byte ranges and all timeline
   // tags intact. GAP tells hls.js not to download these confirmed ad segments.
-  return { playlist: ranges.length ? output.join('\n') : playlist, ranges };
+  return {
+    playlist:
+      gapLines.size || analysis.removeLines.size ? output.join('\n') : playlist,
+    ranges: analysis.ranges,
+  };
 }
 
 export function skipVodAd(
@@ -100,14 +88,16 @@ export function vodAdPlaylistLoader(
       super.load(context, config, {
         onSuccess: (response, stats, _current, network) => {
           if (
-            (context.type === 'manifest' || context.type === 'level') &&
+            (context.type === 'manifest' ||
+              context.type === 'level' ||
+              context.type === 'audioTrack') &&
             typeof response.data === 'string'
           ) {
             const marked = markVodAds(
               response.data,
               response.url || context.url
             );
-            onRanges(marked.ranges);
+            if (context.type !== 'audioTrack') onRanges(marked.ranges);
             callbacks.onSuccess(
               { ...response, data: marked.playlist },
               stats,
