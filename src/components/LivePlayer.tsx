@@ -10,6 +10,7 @@ interface Props {
   poster?: string;
   playerRef: MutableRefObject<Artplayer | null>;
   onRefresh?: () => void;
+  onUnavailable?: () => void;
 }
 
 export default function LivePlayer({
@@ -18,6 +19,7 @@ export default function LivePlayer({
   poster,
   playerRef,
   onRefresh,
+  onUnavailable,
 }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [attempt, setAttempt] = useState(0);
@@ -25,6 +27,8 @@ export default function LivePlayer({
   const [error, setError] = useState('');
   const [needsPlay, setNeedsPlay] = useState(false);
   const [forceProxy, setForceProxy] = useState(false);
+  const unavailable = useRef(onUnavailable);
+  unavailable.current = onUnavailable;
 
   useEffect(() => {
     if (!container.current || !url || !source) return;
@@ -45,7 +49,7 @@ export default function LivePlayer({
     setError('');
     setNeedsPlay(false);
 
-    const fail = (message: string) => {
+    const fail = (message: string, tryAlternative = true) => {
       if (disposed || failed) return;
       failed = true;
       clearTimeout(retryTimer);
@@ -57,6 +61,7 @@ export default function LivePlayer({
         art.video.removeAttribute('src');
         art.video.load();
       }
+      if (tryAlternative) unavailable.current?.();
     };
     const play = () => {
       if (disposed || !art || autoplayTried) return;
@@ -206,6 +211,16 @@ export default function LivePlayer({
                 });
                 hls.on(Hls.Events.ERROR, (_event, data) => {
                   if (disposed || failed || !data.fatal) return;
+                  if (data.response?.code === 401) {
+                    fail('登录已失效，请重新登录后播放直播。', false);
+                    return;
+                  }
+                  if (data.type === Hls.ErrorTypes.NETWORK_ERROR && direct) {
+                    // A saved direct setting must not strand every channel on a
+                    // CORS failure. Retry once with all resources proxied.
+                    setForceProxy(true);
+                    return;
+                  }
                   if (
                     data.type === Hls.ErrorTypes.NETWORK_ERROR &&
                     networkRecoveries < 2
@@ -220,10 +235,24 @@ export default function LivePlayer({
                   ) {
                     mediaRecoveries++;
                     hls?.recoverMediaError();
-                  } else
-                    fail(
-                      '频道暂时无法播放，可能是直播源失效或网络不稳定。请重试或切换频道。'
-                    );
+                  } else {
+                    let message =
+                      '频道暂时无法播放，可能是直播源失效或网络不稳定。请重试或切换频道。';
+                    try {
+                      const text = data.networkDetails?.responseText;
+                      const detail =
+                        typeof text === 'string' ? JSON.parse(text).error : '';
+                      if (
+                        typeof detail === 'string' &&
+                        detail.startsWith('直播') &&
+                        detail.length < 160
+                      )
+                        message = detail;
+                    } catch {
+                      /* An upstream HTML error is not a user-facing message. */
+                    }
+                    fail(message);
+                  }
                 });
                 hls.loadSource(playlist);
                 hls.attachMedia(video);
@@ -269,6 +298,10 @@ export default function LivePlayer({
         });
         art.on('video:error', () => {
           if (hls || disposed || failed) return;
+          if (art?.video.error?.code === 2 && direct) {
+            setForceProxy(true);
+            return;
+          }
           if (art?.video.error?.code === 2 && networkRecoveries < 2) {
             networkRecoveries++;
             setLoading(true);

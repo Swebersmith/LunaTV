@@ -1,4 +1,5 @@
 import { getConfig } from '@/lib/config';
+import { liveFetch } from '@/lib/live-http';
 
 export class LiveProxyError extends Error {
   constructor(message: string, public status = 502) {
@@ -47,12 +48,7 @@ export async function fetchLiveUpstream(
     if (value) headers.set(name, value);
   }
   try {
-    const response = await fetch(url, {
-      headers,
-      signal: controller.signal,
-      redirect: 'follow',
-      cache: 'no-store',
-    });
+    const response = await liveFetch(url, headers, controller.signal);
     if (!response.ok) {
       await response.body?.cancel();
       throw new LiveProxyError(

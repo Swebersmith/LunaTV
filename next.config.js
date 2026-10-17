@@ -74,6 +74,16 @@ const withPWA = require('next-pwa')({
   disable: process.env.NODE_ENV === 'development',
   register: true,
   skipWaiting: true,
+  runtimeCaching: [
+    // Live playlists and fragments must never fall back to an offline snapshot.
+    {
+      urlPattern: ({ url }) =>
+        url.pathname.startsWith('/api/live/') ||
+        url.pathname.startsWith('/api/proxy/'),
+      handler: 'NetworkOnly',
+    },
+    ...require('next-pwa/cache'),
+  ],
 });
 
 module.exports = withPWA(nextConfig);

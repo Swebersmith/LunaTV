@@ -13,6 +13,7 @@ import {
   saveFavorite,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
+import { nextLiveAlternative } from '@/lib/live-failover';
 import { parseCustomTimeFormat } from '@/lib/time';
 
 import EpgScrollableRow from '@/components/EpgScrollableRow';
@@ -76,6 +77,9 @@ function LivePageClient() {
   // 播放器相关
   const [videoUrl, setVideoUrl] = useState('');
   const [channelError, setChannelError] = useState('');
+  const attemptedAddresses = useRef(new Set<string>());
+  const [failoverMessage, setFailoverMessage] = useState('');
+  const [selectionAttempt, setSelectionAttempt] = useState(0);
   const channelRequest = useRef<AbortController | null>(null);
   const sourceRequest = useRef<AbortController | null>(null);
 
@@ -255,6 +259,8 @@ function LivePageClient() {
   };
 
   const fetchChannels = async (source: LiveSource, refresh = false) => {
+    attemptedAddresses.current.clear();
+    setFailoverMessage('');
     const previousChannel = currentChannelRef.current;
     channelRequest.current?.abort();
     const controller = new AbortController();
@@ -305,9 +311,23 @@ function LivePageClient() {
 
   const handleChannelChange = (channel: LiveChannel) => {
     if (isSwitchingSource) return;
+    attemptedAddresses.current.clear();
+    setFailoverMessage('');
+    setSelectionAttempt(value => value + 1);
     setCurrentChannel(channel);
     setVideoUrl(channel.url);
     scrollToChannel(channel);
+  };
+
+  const handleUnavailable = () => {
+    if (!currentChannel) return;
+    attemptedAddresses.current.add(currentChannel.url);
+    const alternative = nextLiveAlternative(currentChannels, currentChannel, attemptedAddresses.current);
+    if (!alternative) return;
+    setFailoverMessage('已自动切换到该频道的备用线路');
+    setCurrentChannel(alternative);
+    setVideoUrl(alternative.url);
+    scrollToChannel(alternative);
   };
 
   // 滚动到指定频道位置的函数
@@ -683,6 +703,7 @@ function LivePageClient() {
 
         {/* 第二行：播放器和频道列表 */}
         <div className='space-y-2'>
+          {failoverMessage && <p role='status' className='text-sm text-gray-600 dark:text-gray-300'>{failoverMessage}</p>}
           {/* 折叠控制 - 仅在 lg 及以上屏幕显示 */}
           <div className='hidden lg:flex justify-end'>
             <button
@@ -730,7 +751,7 @@ function LivePageClient() {
             <div className={`h-full transition-all duration-300 ease-in-out ${isChannelListCollapsed ? 'col-span-1' : 'md:col-span-3'}`}>
               <div className='relative w-full h-[300px] lg:h-full'>
                 {videoUrl && currentSource && currentChannel ? (
-                  <LivePlayer key={currentSource.key + ':' + currentChannel.id} url={videoUrl} source={currentSource.key} poster={currentChannel.logo ? '/api/proxy/logo?' + new URLSearchParams({ url: currentChannel.logo, 'moontv-source': currentSource.key }) : undefined} playerRef={artPlayerRef} onRefresh={() => void fetchChannels(currentSource, true)} />
+                  <LivePlayer key={currentSource.key + ':' + currentChannel.id + ':' + selectionAttempt} url={videoUrl} source={currentSource.key} poster={currentChannel.logo ? '/api/proxy/logo?' + new URLSearchParams({ url: currentChannel.logo, 'moontv-source': currentSource.key }) : undefined} playerRef={artPlayerRef} onRefresh={() => void fetchChannels(currentSource, true)} onUnavailable={handleUnavailable} />
                 ) : <div className='flex h-full items-center justify-center rounded-xl bg-black/90 px-5 text-center text-sm text-white' role='status'>{isSwitchingSource ? '正在加载频道…' : '请选择直播源和频道'}</div>}
 
               </div>

@@ -50,6 +50,7 @@ jest.mock('hls.js', () => ({
 }));
 
 beforeEach(() => {
+  localStorage.clear();
   mockPlayers.length = 0;
   mockHls.length = 0;
   jest
@@ -57,6 +58,61 @@ beforeEach(() => {
     .mockImplementation(() => undefined);
   jest.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
   jest.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockReturnValue('');
+});
+
+it('automatically retries a failed direct connection through the proxy', () => {
+  localStorage.setItem('liveDirectConnect', 'true');
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+    />
+  );
+  expect(mockHls[0].loadSource.mock.calls[0][0]).toContain('allowCORS=true');
+  act(() => mockHls[0].error('error', { fatal: true, type: 'networkError' }));
+  expect(mockHls[0].destroy).toHaveBeenCalledTimes(1);
+  expect(mockHls[1].loadSource.mock.calls[0][0]).not.toContain('allowCORS');
+});
+
+it('reports expired authentication without cycling through station alternatives', () => {
+  const onUnavailable = jest.fn();
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+      onUnavailable={onUnavailable}
+    />
+  );
+  act(() =>
+    mockHls[0].error('error', {
+      fatal: true,
+      type: 'networkError',
+      response: { code: 401 },
+    })
+  );
+  expect(screen.getByRole('alert')).toHaveTextContent('登录已失效');
+  expect(onUnavailable).not.toHaveBeenCalled();
+});
+
+it('also falls back to full proxy when native HLS direct playback fails', () => {
+  localStorage.setItem('liveDirectConnect', 'true');
+  jest.spyOn(Hls, 'isSupported').mockReturnValue(false);
+  jest
+    .spyOn(HTMLMediaElement.prototype, 'canPlayType')
+    .mockReturnValue('maybe');
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+    />
+  );
+  Object.defineProperty(mockPlayers[0].video, 'error', { value: { code: 2 } });
+  act(() => mockPlayers[0].events['video:error']());
+  expect(mockPlayers[0].destroy).toHaveBeenCalledTimes(1);
+  expect(mockPlayers[1].video.src).not.toContain('allowCORS');
 });
 afterEach(() => {
   jest.restoreAllMocks();
@@ -176,11 +232,25 @@ it('shows a finite startup timeout when no video data arrives', () => {
 it('reconnects native HLS network errors twice, then stops the stream', () => {
   jest.useFakeTimers();
   jest.spyOn(Hls, 'isSupported').mockReturnValue(false);
-  jest.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockReturnValue('maybe');
-  jest.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
-  render(<LivePlayer url='https://media.test/live.m3u8' source='test' playerRef={{ current: null }} />);
+  jest
+    .spyOn(HTMLMediaElement.prototype, 'canPlayType')
+    .mockReturnValue('maybe');
+  jest
+    .spyOn(HTMLMediaElement.prototype, 'pause')
+    .mockImplementation(() => undefined);
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+    />
+  );
   Object.defineProperty(mockPlayers[0].video, 'error', { value: { code: 2 } });
-  for (let count = 0; count < 3; count++) act(() => { mockPlayers[0].events['video:error'](); jest.advanceTimersByTime(3000); });
+  for (let count = 0; count < 3; count++)
+    act(() => {
+      mockPlayers[0].events['video:error']();
+      jest.advanceTimersByTime(3000);
+    });
   expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(3);
   expect(mockPlayers[0].video.hasAttribute('src')).toBe(false);
   expect(screen.getByRole('alert')).toBeVisible();
@@ -189,7 +259,13 @@ it('reconnects native HLS network errors twice, then stops the stream', () => {
 it('continues to HLS playback when an extensionless precheck fails', async () => {
   const original = global.fetch;
   global.fetch = jest.fn().mockResolvedValue({ ok: false });
-  render(<LivePlayer url='https://media.test/channel' source='test' playerRef={{ current: null }} />);
+  render(
+    <LivePlayer
+      url='https://media.test/channel'
+      source='test'
+      playerRef={{ current: null }}
+    />
+  );
   await act(async () => undefined);
   expect(mockHls).toHaveLength(1);
   expect(mockHls[0].loadSource).toHaveBeenCalled();
