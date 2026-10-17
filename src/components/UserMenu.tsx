@@ -884,13 +884,13 @@ export const UserMenu: React.FC = () => {
             </div>
 
             {/* 直播视频浏览器直连 */}
-            <div className='flex items-center justify-between'>
-              <div>
+            <div className='flex items-center justify-between gap-4'>
+              <div className='min-w-0'>
                 <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
                   IPTV 视频浏览器直连
                 </h4>
                 <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-                  开启 IPTV 视频浏览器直连时，需要自备 Allow CORS 插件
+                  开启后，HTTPS 视频分片由浏览器直连，减少站点转发；源站须允许跨域，连接失败会自动改用代理。HTTP 分片、播放列表和密钥仍走代理，建议默认关闭。
                 </p>
               </div>
               <label className='flex items-center cursor-pointer'>
@@ -899,6 +899,7 @@ export const UserMenu: React.FC = () => {
                     type='checkbox'
                     className='sr-only peer'
                     checked={liveDirectConnect}
+                    aria-label='IPTV 视频浏览器直连'
                     onChange={(e) => handleLiveDirectConnectToggle(e.target.checked)}
                   />
                   <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>

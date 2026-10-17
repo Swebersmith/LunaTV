@@ -21,7 +21,7 @@ export default function SourceEditor({
   onSave,
   onCancel,
 }: {
-  kind: 'video' | 'live';
+  kind: 'video' | 'live' | 'epg';
   source?: Partial<SourceEditorValue>;
   isNew: boolean;
   busy: boolean;
@@ -41,7 +41,7 @@ export default function SourceEditor({
     ...source,
   });
   const title = `${isNew ? '添加' : '编辑'}${
-    kind === 'video' ? '视频源' : '直播源'
+    kind === 'video' ? '视频源' : kind === 'epg' ? '节目单源' : '直播源'
   }`;
   const fields: {
     key: keyof SourceEditorValue;
@@ -50,11 +50,29 @@ export default function SourceEditor({
     url?: boolean;
   }[] = [
     { key: 'name', label: '名称', required: true },
-    { key: 'key', label: isNew ? 'Key' : 'Key（保留原标识）', required: true },
+    ...(kind === 'epg'
+      ? []
+      : [
+          {
+            key: 'key' as const,
+            label: isNew ? 'Key' : 'Key（保留原标识）',
+            required: true,
+          },
+        ]),
     ...(kind === 'video'
       ? [
           { key: 'api' as const, label: 'API 地址', required: true, url: true },
           { key: 'detail' as const, label: 'Detail 地址（选填）', url: true },
+        ]
+      : kind === 'epg'
+      ? [
+          {
+            key: 'url' as const,
+            label: 'XMLTV 节目单地址',
+            required: true,
+            url: true,
+          },
+          { key: 'ua' as const, label: '自定义 UA（选填）' },
         ]
       : [
           { key: 'url' as const, label: 'M3U 地址', required: true, url: true },
@@ -127,7 +145,11 @@ export default function SourceEditor({
                 note: event.target.value,
               }))
             }
-            placeholder='例如资源类型、画质、线路特点或使用说明'
+            placeholder={
+              kind === 'epg'
+                ? '例如覆盖频道、更新频率或适用地区'
+                : '例如资源类型、画质、线路特点或使用说明'
+            }
             className='w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100'
           />
         </div>

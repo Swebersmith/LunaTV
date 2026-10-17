@@ -18,6 +18,7 @@ export interface LiveChannels {
     url: string;
   }[];
   epgUrl: string;
+  m3uEpgUrl?: string;
   epgs: {
     [key: string]: {
       start: string;
@@ -29,7 +30,10 @@ export interface LiveChannels {
 
 const cachedLiveChannels: { [key: string]: LiveChannels } = {};
 const cachedAt: Record<string, number> = {};
-const epgCachedAt: Record<string, number> = {};
+const cachedEpg: Record<
+  string,
+  { fingerprint: string; at: number; url: string; epgs: LiveChannels['epgs'] }
+> = {};
 const cachedFingerprints: { [key: string]: string } = {};
 const liveFingerprint = (source: { url: string; ua?: string; epg?: string }) =>
   JSON.stringify([source.url, source.ua || '', source.epg || '']);
@@ -38,7 +42,9 @@ export function deleteCachedLiveChannels(key: string) {
   delete cachedLiveChannels[key];
   delete cachedFingerprints[key];
   delete cachedAt[key];
-  delete epgCachedAt[key];
+  Object.keys(cachedEpg)
+    .filter((entry) => entry.startsWith(key + '\0'))
+    .forEach((entry) => delete cachedEpg[entry]);
 }
 
 export async function getCachedLiveChannels(
@@ -87,52 +93,141 @@ export async function refreshLiveChannels(liveInfo: {
     channelNumber: result.channels.length,
     channels: result.channels,
     epgUrl,
+    m3uEpgUrl: result.tvgUrl,
     epgs: {},
   };
   cachedAt[liveInfo.key] = Date.now();
-  delete epgCachedAt[liveInfo.key];
+  Object.keys(cachedEpg)
+    .filter((entry) => entry.startsWith(liveInfo.key + '\0'))
+    .forEach((entry) => delete cachedEpg[entry]);
   cachedFingerprints[liveInfo.key] = liveFingerprint(liveInfo);
   return result.channels.length;
 }
 
-// EPG is optional: fetch it only on the separate EPG request, after playback starts.
-export async function getLiveEpg(key: string) {
+// EPG is optional: no guide fetching or persistent writes on the channel path.
+export async function getLiveEpg(key: string, tvgId?: string) {
   const channelData = await getCachedLiveChannels(key);
-  if (!channelData || !channelData.epgUrl) return channelData;
-  if (Date.now() - (epgCachedAt[key] || 0) < 10 * 60 * 1000) return channelData;
+  if (!channelData) return null;
   const config = await getConfig();
   const live = config.LiveConfig?.find(
     (item) => item.key === key && !item.disabled
   );
   if (!live) return null;
-  const epgs = await parseEpg(
-    channelData.epgUrl,
-    live.ua || defaultUA,
-    channelData.channels.map((channel) => channel.tvgId)
-  );
-  if (cachedLiveChannels[key] === channelData) {
-    channelData.epgs = epgs;
-    epgCachedAt[key] = Date.now();
+  const candidates: { url: string; ua: string }[] = [];
+  if (live.epg) candidates.push({ url: live.epg, ua: live.ua || defaultUA });
+  for (const guide of config.EpgConfig || []) {
+    if (!guide.disabled)
+      candidates.push({ url: guide.url, ua: guide.ua || live.ua || defaultUA });
   }
-  return channelData;
+  const playlistGuide = channelData.m3uEpgUrl || channelData.epgUrl;
+  if (playlistGuide)
+    candidates.push({ url: playlistGuide, ua: live.ua || defaultUA });
+  const seen = new Set<string>();
+  const guides = candidates.filter((guide) => {
+    const identity = JSON.stringify([guide.url, guide.ua]);
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+  const ids = tvgId
+    ? [tvgId]
+    : Array.from(
+        new Set(
+          channelData.channels.map((channel) => channel.tvgId).filter(Boolean)
+        )
+      );
+  const cacheKey = key + '\0' + (tvgId || '*');
+  const fingerprint = JSON.stringify([liveFingerprint(live), guides, ids]);
+  const cached = cachedEpg[cacheKey];
+  const ttl =
+    cached && Object.keys(cached.epgs).length ? 10 * 60 * 1000 : 60000;
+  if (cached?.fingerprint === fingerprint && Date.now() - cached.at < ttl)
+    return { ...channelData, epgUrl: cached.url, epgs: cached.epgs };
+  const epgs: LiveChannels['epgs'] = {};
+  let matchedUrl = '';
+  const deadline = Date.now() + 12000;
+  for (const guide of guides) {
+    const missing = ids.filter((id) => !epgs[id]?.length);
+    if (!missing.length || Date.now() >= deadline) break;
+    const result = await parseEpg(guide.url, guide.ua, missing, deadline);
+    for (const id of missing) {
+      if (result[id]?.length) {
+        epgs[id] = result[id];
+        if (!matchedUrl) matchedUrl = guide.url;
+      }
+    }
+  }
+  if (cachedLiveChannels[key] === channelData) {
+    // Data only, bounded across channel selections; never share in-flight I/O.
+    if (!cachedEpg[cacheKey] && Object.keys(cachedEpg).length >= 32)
+      delete cachedEpg[Object.keys(cachedEpg)[0]];
+    cachedEpg[cacheKey] = {
+      fingerprint,
+      at: Date.now(),
+      url: matchedUrl,
+      epgs,
+    };
+  }
+  return { ...channelData, epgUrl: matchedUrl, epgs };
 }
 
 async function parseEpg(
   epgUrl: string,
   ua: string,
-  tvgIds: string[]
+  tvgIds: string[],
+  deadline: number
 ): Promise<LiveChannels['epgs']> {
   const result: LiveChannels['epgs'] = {};
   const ids = new Set(tvgIds);
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const response = await fetchLiveUpstream(epgUrl, ua);
-    reader = response.body?.getReader();
-    if (!reader) return result;
+    const response = await fetchLiveUpstream(
+      epgUrl,
+      ua,
+      undefined,
+      Math.min(4000, Math.max(1, deadline - Date.now()))
+    );
+    const raw = response.body?.getReader();
+    if (!raw) return result;
+    reader = raw;
     timer = setTimeout(() => {
       void reader?.cancel().catch(() => undefined);
-    }, 15000);
+      void raw.cancel().catch(() => undefined);
+    }, Math.max(1, deadline - Date.now()));
+    const prefix: Uint8Array[] = [];
+    let prefixLength = 0;
+    while (prefixLength < 2) {
+      const chunk = await raw.read();
+      if (chunk.done) break;
+      prefix.push(chunk.value);
+      prefixLength += chunk.value.byteLength;
+    }
+    const peek = prefix
+      .flatMap((chunk) => Array.from(chunk.slice(0, 2)))
+      .slice(0, 2);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        prefix.forEach((chunk) => controller.enqueue(chunk));
+      },
+      async pull(controller) {
+        try {
+          const chunk = await raw.read();
+          if (chunk.done) controller.close();
+          else controller.enqueue(chunk.value);
+        } catch (error) {
+          controller.error(error);
+        }
+      },
+      cancel: () => raw.cancel(),
+    });
+    // Detect bytes, rather than the suffix: fetch may have already decoded a
+    // Content-Encoding gzip response, while an .xml.gz file needs decoding here.
+    reader = (
+      peek[0] === 0x1f && peek[1] === 0x8b
+        ? stream.pipeThrough(new DecompressionStream('gzip'))
+        : stream
+    ).getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let bytes = 0;
@@ -160,7 +255,18 @@ async function parseEpg(
             result[id].push({
               start,
               end,
-              title: decode(title.replace(/<[^>]*>/g, '')),
+              title: decode(
+                title
+                  .replace(
+                    /<!\[CDATA\[([\s\S]*?)\]\]>/g,
+                    (_match, value: string) =>
+                      value
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                  )
+                  .replace(/<[^>]*>/g, '')
+              ),
             });
         }
       }

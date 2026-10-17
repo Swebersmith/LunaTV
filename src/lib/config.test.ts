@@ -39,6 +39,12 @@ it('keeps imported source overrides, notes, and disabled states through subscrip
   expect(config.LiveConfig?.[0]).toMatchObject({ name: '手动直播', url: 'https://manual.test/list', note: '直播备注', disabled: true });
 });
 
+it('normalizes older guide configurations without retaining malformed entries or losing valid notes', () => {
+  const guide = { key: 'guide', name: '节目单', url: 'https://guide.test/xml', note: '每日更新', disabled: true };
+  const config = { UserConfig: { Users: [] }, EpgConfig: [null, guide, { ...guide, name: '重复' }, { ...guide, key: 'bad', note: {} }] } as unknown as AdminConfig;
+  expect(configSelfCheck(config).EpgConfig).toEqual([guide]);
+});
+
 describe('user configuration cleanup', () => {
   const originalUsername = process.env.USERNAME;
 

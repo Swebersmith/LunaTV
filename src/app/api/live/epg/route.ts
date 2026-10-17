@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
       return privateJson({ error: '缺少频道tvg-id参数' }, { status: 400 });
     }
 
-    const channelData = await getLiveEpg(sourceKey);
+    const channelData = await getLiveEpg(sourceKey, tvgId);
 
     if (!channelData) {
       // 频道信息未找到时返回空的节目单数据

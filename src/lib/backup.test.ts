@@ -36,3 +36,22 @@ it('validates every user before allowing a backup restore', () => {
     parseBackup({ ...valid, userData: { alice: { searchHistory: [42] } } })
   ).toThrow();
 });
+
+it('preserves independent EPG sources, ordering and notes through backup validation', () => {
+  const backup = {
+    adminConfig: {
+      SiteConfig: { SiteName: 'CrayonTV' },
+      EpgConfig: [
+        {
+          key: 'guide',
+          name: '节目单',
+          url: 'https://guide.test/epg.xml',
+          note: '备注',
+          disabled: true,
+        },
+      ],
+    },
+    userData: {},
+  };
+  expect(parseBackup(backup)).toEqual(backup);
+});

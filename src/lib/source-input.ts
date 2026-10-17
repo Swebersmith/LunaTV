@@ -40,3 +40,13 @@ export function parseLiveSourceInput(body: Record<string, unknown>) {
     note: text(body.note, '备注'),
   };
 }
+
+export function parseEpgSourceInput(body: Record<string, unknown>) {
+  return {
+    key: text(body.key, '节目单源标识', true),
+    name: text(body.name, '名称', true),
+    url: address(body.url, 'XMLTV 节目单地址', true),
+    ua: text(body.ua, 'User-Agent'),
+    note: text(body.note, '备注'),
+  };
+}

@@ -350,6 +350,14 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   if (!adminConfig.LiveConfig || !Array.isArray(adminConfig.LiveConfig)) {
     adminConfig.LiveConfig = [];
   }
+  if (!Array.isArray(adminConfig.EpgConfig)) adminConfig.EpgConfig = [];
+  const epgKeys = new Set<string>();
+  adminConfig.EpgConfig = adminConfig.EpgConfig.filter(source => {
+    if (!source || typeof source.key !== 'string' || !source.key || epgKeys.has(source.key) || typeof source.name !== 'string' || typeof source.url !== 'string' || !/^https?:\/\//i.test(source.url)) return false;
+    if ((source.ua !== undefined && typeof source.ua !== 'string') || (source.note !== undefined && typeof source.note !== 'string') || (source.disabled !== undefined && typeof source.disabled !== 'boolean')) return false;
+    epgKeys.add(source.key);
+    return true;
+  });
 
   // 站长变更自检
   const ownerUser = process.env.USERNAME;

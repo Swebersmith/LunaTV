@@ -47,6 +47,7 @@ import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 
 import AdminAccessError from '@/components/AdminAccessError';
 import DataMigration from '@/components/DataMigration';
+import EpgSourceSettings from '@/components/EpgSourceSettings';
 import PageLayout from '@/components/PageLayout';
 import SortableSourceRow from '@/components/SortableSourceRow';
 import SourceAddress from '@/components/SourceAddress';
@@ -4390,6 +4391,7 @@ function AdminPageClient() {
               onToggle={() => toggleTab('liveSource')}
             >
               <LiveSourceConfig config={config} refreshConfig={fetchConfig} onSourcesChange={sources => setConfig(previous => previous ? { ...previous, LiveConfig: sources } : previous)} />
+              <EpgSourceSettings sources={config?.EpgConfig || []} onChange={sources => setConfig(previous => previous ? { ...previous, EpgConfig: sources } : previous)} />
             </CollapsibleTab>
 
             {/* 分类配置标签 */}

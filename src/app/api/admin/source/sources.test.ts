@@ -27,6 +27,7 @@ import { db } from '@/lib/db';
 import { deleteCachedLiveChannels, refreshLiveChannels } from '@/lib/live';
 
 import { POST as video } from './route';
+import { POST as epg } from '../epg/route';
 import { POST as live } from '../live/route';
 
 const request = (body: unknown) => ({ json: async () => body } as NextRequest);
@@ -184,7 +185,7 @@ it.each([
   }
 );
 
-it.each([video, live])(
+it.each([video, live, epg])(
   'rejects an unauthenticated or non-admin caller',
   async (handler) => {
     jest.mocked(getAuthInfoFromCookie).mockReturnValue(null);
@@ -198,3 +199,74 @@ it.each([video, live])(
     expect(db.saveAdminConfig).not.toHaveBeenCalled();
   }
 );
+
+it('adds a reusable EPG source without downloading a playlist or replacing other configuration', async () => {
+  const input = {
+    key: 'guide',
+    name: '节目单',
+    url: 'https://guide.test/epg.xml.gz',
+    ua: 'Guide/1.0',
+    note: '公共节目单',
+  };
+  const result = await send(epg, { action: 'add', ...input });
+  expect(result.status).toBe(200);
+  expect(result.body.sources).toEqual([{ ...input, disabled: false }]);
+  expect(jest.mocked(db.saveAdminConfig).mock.calls[0][0].LiveConfig).toEqual(
+    original.LiveConfig
+  );
+  expect(original.EpgConfig).toBeUndefined();
+  expect(refreshLiveChannels).not.toHaveBeenCalled();
+});
+
+it('preserves EPG disabled state when editing and saves priority, enable and delete operations', async () => {
+  original.EpgConfig = [
+    { key: 'a', name: 'A', url: 'https://a.test/guide.xml', disabled: true },
+    { key: 'b', name: 'B', url: 'https://b.test/guide.xml' },
+  ];
+  const edited = await send(epg, {
+    action: 'edit',
+    key: 'a',
+    name: '新名称',
+    url: 'https://a.test/new.xml',
+    note: '备注',
+  });
+  expect(edited.body.sources[0]).toMatchObject({
+    name: '新名称',
+    note: '备注',
+    disabled: true,
+  });
+  expect(
+    (await send(epg, { action: 'sort', order: ['b', 'a'] })).body.sources.map(
+      (source) => source.key
+    )
+  ).toEqual(['b', 'a']);
+  expect(
+    (await send(epg, { action: 'enable', key: 'a' })).body.sources[0].disabled
+  ).toBe(false);
+  expect(
+    (await send(epg, { action: 'delete', key: 'a' })).body.sources.map(
+      (source) => source.key
+    )
+  ).toEqual(['b']);
+  expect(original.EpgConfig[0].disabled).toBe(true);
+});
+
+it.each([
+  null,
+  { action: 'add', key: 'a', name: 'A', url: 'javascript:alert(1)' },
+  { action: 'sort', order: ['a', 'a'] },
+])('rejects invalid guide configuration before writing: %p', async (input) => {
+  expect((await send(epg, input)).status).toBe(400);
+  expect(db.saveAdminConfig).not.toHaveBeenCalled();
+});
+
+it('keeps EPG edits private until persistence succeeds', async () => {
+  original.EpgConfig = [
+    { key: 'a', name: 'A', url: 'https://a.test/guide.xml' },
+  ];
+  jest
+    .mocked(db.saveAdminConfig)
+    .mockRejectedValueOnce(new Error('unavailable'));
+  expect((await send(epg, { action: 'disable', key: 'a' })).status).toBe(500);
+  expect(original.EpgConfig[0].disabled).toBeUndefined();
+});
