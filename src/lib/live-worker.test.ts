@@ -57,18 +57,41 @@ function request(path = 'segment', auth = cookie, method = 'GET') {
 beforeEach(() => {
   jest.clearAllMocks();
   first.mockResolvedValue({ ua: 'ConfiguredPlayer' });
-  global.fetch = jest
-    .fn()
-    .mockResolvedValue(
-      new Response(new Uint8Array([1, 2, 3]), {
-        status: 206,
-        headers: { 'Content-Range': 'bytes 0-2/9', 'Content-Length': '3' },
-      })
-    );
+  global.fetch = jest.fn().mockResolvedValue(
+    new Response(new Uint8Array([1, 2, 3]), {
+      status: 206,
+      headers: { 'Content-Range': 'bytes 0-2/9', 'Content-Length': '3' },
+    })
+  );
 });
 afterEach(() => {
   global.fetch = originalFetch;
 });
+
+it.each(['测试用户', '用户%25', 'viewer@example.com'])(
+  'accepts the actual Next.js login cookie without corrupting the username: %s',
+  async (username) => {
+    const { NextResponse } = jest.requireActual('next/server');
+    const login = NextResponse.json({ ok: true });
+    login.cookies.set(
+      'auth',
+      encodeURIComponent(
+        JSON.stringify({
+          username,
+          signature: createHmac('sha256', secret)
+            .update(username)
+            .digest('hex'),
+        })
+      ),
+      { path: '/', sameSite: 'lax' }
+    );
+    const auth = login.headers.get('set-cookie')?.split(';')[0];
+    expect(auth).toMatch(/^auth=%257B/);
+    expect((await handleLiveProxy(request('segment', auth), env))?.status).toBe(
+      206
+    );
+  }
+);
 
 it('streams authenticated media using only a selected-source D1 read and preserves range/UA', async () => {
   const response = await handleLiveProxy(request(), env);
@@ -90,6 +113,14 @@ it('streams authenticated media using only a selected-source D1 read and preserv
 it.each([
   '',
   'auth=bad',
+  'auth=%ZZ',
+  'auth=' +
+    encodeURIComponent(
+      encodeURIComponent(
+        JSON.stringify({ username: '测试用户', signature: '0'.repeat(64) })
+      )
+    ),
+  'auth=' + encodeURIComponent(encodeURIComponent(cookie.slice(5))),
   'auth=' +
     encodeURIComponent(
       JSON.stringify({ username: '测试用户', signature: '0'.repeat(64) })

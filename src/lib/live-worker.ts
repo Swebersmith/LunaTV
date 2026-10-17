@@ -17,7 +17,13 @@ async function authenticated(request: Request, secret: string) {
     ?.match(/(?:^|;\s*)auth=([^;]+)/)?.[1];
   if (!cookie || cookie.length > 8192) return false;
   try {
-    const auth = JSON.parse(decodeURIComponent(cookie));
+    let decoded = decodeURIComponent(cookie);
+    // The login route encodes JSON, then Next.js encodes the cookie value.
+    // Unwrap that second layer only before reaching JSON, so literal percent
+    // sequences in a username remain part of the signed username.
+    if (!decoded.trimStart().startsWith('{'))
+      decoded = decodeURIComponent(decoded);
+    const auth = JSON.parse(decoded);
     if (
       typeof auth.username !== 'string' ||
       !auth.username ||
