@@ -7,6 +7,7 @@ import { MutableRefObject, useEffect, useRef, useState } from 'react';
 import {
   liveBufferAhead,
   liveHlsConfig,
+  liveResourceLimited,
   liveStartupBuffer,
 } from '@/lib/live-playback';
 import { livePlaylistLoader } from '@/lib/live-playlist-loader';
@@ -220,7 +221,19 @@ export default function LivePlayer({
                   }),
                 });
                 hls.on(Hls.Events.ERROR, (_event, data) => {
-                  if (disposed || failed || !data.fatal) return;
+                  if (disposed || failed) return;
+                  if (
+                    liveResourceLimited(
+                      data.response?.code,
+                      data.networkDetails?.response ?? data.response?.data
+                    )
+                  ) {
+                    // A platform limit affects every station on this Worker.
+                    // Stop retries instead of multiplying load across sources.
+                    fail('直播代理触发了资源限制，请稍后重新连接。', false);
+                    return;
+                  }
+                  if (!data.fatal) return;
                   if (data.response?.code === 401) {
                     fail('登录已失效，请重新登录后播放直播。', false);
                     return;

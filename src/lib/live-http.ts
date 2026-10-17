@@ -11,6 +11,12 @@ export type LiveConnect = (
   options: { secureTransport: 'on' | 'off'; allowHalfOpen: boolean }
 ) => LiveSocket;
 
+// Available in workerd. Other runtimes retain the portable parser below.
+declare const FixedLengthStream: new (length: number) => {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+};
+
 export function isLiveIp(url: URL) {
   return (
     /^\d+\.\d+\.\d+\.\d+$/.test(url.hostname) || url.hostname.startsWith('[')
@@ -86,16 +92,31 @@ export async function fetchLiveIp(
     offset = 0;
     return !next.done;
   }
-  async function line(limit = 8192): Promise<string> {
+  const headerDecoder = new TextDecoder('latin1');
+  function line(limit = 8192): string | Promise<string> {
+    const end = pending.indexOf(10, offset);
+    if (end >= 0) {
+      if (end - offset > limit + 1) throw new Error('直播响应头过大');
+      if (end === offset || pending[end - 1] !== 13)
+        throw new Error('直播响应行格式错误');
+      const text = headerDecoder.decode(pending.subarray(offset, end - 1));
+      offset = end + 1;
+      return text;
+    }
+    return fragmentedLine(limit);
+  }
+  async function fragmentedLine(limit: number): Promise<string> {
     let text = '';
     while (await bytes()) {
-      const value = pending[offset++];
-      if (value === 10) {
+      const end = pending.indexOf(10, offset);
+      const stop = end < 0 ? pending.length : end;
+      text += headerDecoder.decode(pending.subarray(offset, stop));
+      offset = stop + (end < 0 ? 0 : 1);
+      if (text.length > limit + 1) throw new Error('直播响应头过大');
+      if (end >= 0) {
         if (!text.endsWith('\r')) throw new Error('直播响应行格式错误');
         return text.slice(0, -1);
       }
-      text += String.fromCharCode(value);
-      if (text.length > limit) throw new Error('直播响应头过大');
     }
     throw new Error('直播响应意外中断');
   }
@@ -152,59 +173,132 @@ export async function fetchLiveIp(
     let chunkRemaining = 0;
     let chunkEnd = false;
     const noBody = status === 204 || status === 205 || status === 304;
+    let nativeBody: ReadableStream<Uint8Array> | undefined;
+    if (
+      !noBody &&
+      !chunked &&
+      remaining !== Infinity &&
+      typeof FixedLengthStream === 'function'
+    ) {
+      // Once headers are consumed, let workerd transfer the socket body in
+      // native code. A JS pull/read/enqueue callback for every TCP packet can
+      // exhaust a free Worker's CPU budget even when nothing is transcoded.
+      const transfer = new FixedLengthStream(remaining);
+      const prefix = pending.subarray(offset, offset + remaining);
+      reader.releaseLock();
+      nativeBody = transfer.readable;
+      const pump = async () => {
+        const writer = transfer.writable.getWriter();
+        try {
+          if (prefix.length) await writer.write(prefix);
+          if (prefix.length === remaining) {
+            await writer.close();
+            return;
+          }
+        } finally {
+          writer.releaseLock();
+        }
+        // The returned response owns this streaming operation; pipeTo carries
+        // backpressure, cancellation and fixed-length validation natively.
+        await socket.readable.pipeTo(transfer.writable);
+      };
+      void pump()
+        .catch(async (error) => {
+          await transfer.writable.abort(error).catch(() => undefined);
+        })
+        .finally(close);
+    }
     const body = noBody
       ? null
-      : new ReadableStream<Uint8Array>({
+      : nativeBody ||
+        new ReadableStream<Uint8Array>({
           async pull(controller) {
             try {
-              if (chunked && chunkRemaining === 0) {
-                if (chunkEnd && (await line()) !== '')
-                  throw new Error('无效的直播分块结尾');
-                const size = (await line()).split(';', 1)[0];
-                if (!/^[0-9a-f]+$/i.test(size))
-                  throw new Error('无效的直播分块长度');
-                chunkRemaining = parseInt(size, 16);
-                if (!Number.isSafeInteger(chunkRemaining))
-                  throw new Error('直播分块过大');
-                if (chunkRemaining === 0) {
-                  let trailerSize = 0;
-                  let trailer: string;
-                  while ((trailer = await line()) !== '') {
-                    trailerSize += trailer.length;
-                    if (trailerSize > 65536) throw new Error('直播尾部过大');
+              // Dechunk into bounded blocks, rather than enqueueing one small
+              // TS packet at a time. Buffered framing is parsed synchronously;
+              // only an actual socket read needs an asynchronous continuation.
+              const output = chunked ? new Uint8Array(64 * 1024) : null;
+              let written = 0;
+              const flush = () => {
+                if (output && written)
+                  controller.enqueue(output.subarray(0, written));
+              };
+              do {
+                if (chunked && chunkRemaining === 0) {
+                  if (written && pending.indexOf(10, offset) < 0) break;
+                  if (chunkEnd) {
+                    const ending = line();
+                    if (
+                      (typeof ending === 'string' ? ending : await ending) !==
+                      ''
+                    )
+                      throw new Error('无效的直播分块结尾');
+                    chunkEnd = false;
                   }
+                  if (written && pending.indexOf(10, offset) < 0) break;
+                  const sizeLine = line();
+                  const size = (
+                    typeof sizeLine === 'string' ? sizeLine : await sizeLine
+                  ).split(';', 1)[0];
+                  if (!/^[0-9a-f]+$/i.test(size))
+                    throw new Error('无效的直播分块长度');
+                  chunkRemaining = parseInt(size, 16);
+                  if (!Number.isSafeInteger(chunkRemaining))
+                    throw new Error('直播分块过大');
+                  if (chunkRemaining === 0) {
+                    let trailerSize = 0;
+                    let trailer: string;
+                    for (;;) {
+                      const value = line();
+                      trailer = typeof value === 'string' ? value : await value;
+                      if (trailer === '') break;
+                      trailerSize += trailer.length;
+                      if (trailerSize > 65536) throw new Error('直播尾部过大');
+                    }
+                    flush();
+                    controller.close();
+                    close();
+                    return;
+                  }
+                }
+                if (remaining === 0) {
                   controller.close();
                   close();
                   return;
                 }
-              }
-              if (remaining === 0) {
-                controller.close();
-                close();
-                return;
-              }
-              if (!(await bytes())) {
-                if (chunked || remaining !== Infinity)
-                  throw new Error('直播视频数据意外中断');
-                controller.close();
-                close();
-                return;
-              }
-              const count = Math.min(
-                pending.length - offset,
-                remaining,
-                chunked ? chunkRemaining : Infinity
+                if (offset === pending.length && !(await bytes())) {
+                  if (chunked || remaining !== Infinity)
+                    throw new Error('直播视频数据意外中断');
+                  controller.close();
+                  close();
+                  return;
+                }
+                const count = Math.min(
+                  pending.length - offset,
+                  remaining,
+                  chunked ? chunkRemaining : Infinity,
+                  output ? output.length - written : Infinity
+                );
+                const data = pending.subarray(offset, offset + count);
+                if (output) {
+                  output.set(data, written);
+                  written += count;
+                } else controller.enqueue(data);
+                offset += count;
+                remaining -= count;
+                if (chunked) {
+                  chunkRemaining -= count;
+                  chunkEnd = true;
+                } else if (remaining === 0) {
+                  controller.close();
+                  close();
+                }
+              } while (
+                output &&
+                written < output.length &&
+                offset < pending.length
               );
-              controller.enqueue(pending.subarray(offset, offset + count));
-              offset += count;
-              remaining -= count;
-              if (chunked) {
-                chunkRemaining -= count;
-                chunkEnd = true;
-              } else if (remaining === 0) {
-                controller.close();
-                close();
-              }
+              flush();
             } catch (error) {
               controller.error(error);
               close();

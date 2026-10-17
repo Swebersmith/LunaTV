@@ -3,6 +3,44 @@ import { test } from 'node:test';
 
 import { createWorker, resolveEnvironment } from './worker.mjs';
 
+test('media bypasses the framework while retaining resolved bindings and authentication failures', async () => {
+  let applicationCalls = 0;
+  const env = { DB: { prepare() {} } };
+  const worker = createWorker(
+    {
+      fetch() {
+        applicationCalls++;
+        return new Response('page');
+      },
+    },
+    (request, resolved) => {
+      assert.equal(resolved.LUNATV_D1, env.DB);
+      assert.equal(resolved.STORAGE_TYPE, 'cloudflare-d1');
+      return new URL(request.url).pathname.startsWith('/api/proxy/')
+        ? new Response('Unauthorized', { status: 401 })
+        : null;
+    }
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        new Request('https://example.test/api/proxy/segment'),
+        env,
+        {}
+      )
+    ).status,
+    401
+  );
+  assert.equal(applicationCalls, 0);
+  assert.equal(
+    await (
+      await worker.fetch(new Request('https://example.test/'), env, {})
+    ).text(),
+    'page'
+  );
+  assert.equal(applicationCalls, 1);
+});
+
 test('D1 needs only a dashboard binding, including when an old public build variable selects KV', () => {
   const database = { prepare() {} };
   const env = { DB: database, NEXT_PUBLIC_STORAGE_TYPE: 'cloudflare-kv' };

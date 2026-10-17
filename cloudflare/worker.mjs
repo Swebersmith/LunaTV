@@ -14,10 +14,12 @@ export function resolveEnvironment(env) {
   };
 }
 
-export function createWorker(handler) {
+export function createWorker(handler, handleMedia = () => null) {
   return {
-    fetch(request, env, ctx) {
-      return handler.fetch(request, resolveEnvironment(env), ctx);
+    async fetch(request, env, ctx) {
+      const resolved = resolveEnvironment(env);
+      const media = await handleMedia(request, resolved);
+      return media || handler.fetch(request, resolved, ctx);
     },
     async scheduled(_event, env, ctx) {
       if (!env.CRON_SECRET) {

@@ -43,6 +43,39 @@ function fixture(chunks: Uint8Array[], end = true) {
   };
 }
 const headers = new Headers({ 'User-Agent': 'LiveTest', Range: 'bytes=0-2' });
+it('coalesces thousands of small transport chunks into bounded blocks without changing video bytes', async () => {
+  const packet = new Uint8Array(188).fill(47);
+  const framing = encoder.encode('bc\r\n');
+  const end = encoder.encode('\r\n');
+  const count = 4096;
+  const raw = Buffer.concat([
+    encoder.encode('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'),
+    ...Array.from({ length: count }, () =>
+      Buffer.concat([framing, packet, end])
+    ),
+    encoder.encode('0\r\n\r\n'),
+  ]);
+  const wire = [];
+  for (let offset = 0; offset < raw.length; offset += 32768)
+    wire.push(raw.subarray(offset, offset + 32768));
+  const response = await fetchLiveIp(
+    url,
+    headers,
+    new AbortController().signal,
+    fixture(wire).connect
+  );
+  if (!response.body) throw new Error('Missing body');
+  const reader = response.body.getReader();
+  const parts = [];
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    expect(value.length).toBeLessThanOrEqual(64 * 1024);
+    parts.push(value);
+  }
+  expect(parts.length).toBeLessThan(256);
+  expect(Buffer.concat(parts)).toEqual(Buffer.alloc(count * 188, 47));
+});
 it('streams an IP origin with signed path, user agent, range and correct URL', async () => {
   const test = fixture(
     [

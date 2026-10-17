@@ -8,6 +8,32 @@ import LivePlayer from './LivePlayer';
 
 const mockPlayers: any[] = [];
 const mockHls: any[] = [];
+it('stops even nonfatal resource-limit retries without cycling through other stations', () => {
+  jest.useFakeTimers();
+  const onUnavailable = jest.fn();
+  render(
+    <LivePlayer
+      url='https://media.test/live.m3u8'
+      source='test'
+      playerRef={{ current: null }}
+      onUnavailable={onUnavailable}
+    />
+  );
+  act(() =>
+    mockHls[0].error('error', {
+      fatal: false,
+      type: 'networkError',
+      response: { code: 500 },
+      networkDetails: { response: '<h1>Error 1102</h1>' },
+    })
+  );
+  act(() => jest.advanceTimersByTime(90000));
+  expect(screen.getByRole('alert')).toHaveTextContent('资源限制');
+  expect(mockHls[0].stopLoad).toHaveBeenCalledTimes(1);
+  expect(mockHls[0].startLoad).not.toHaveBeenCalled();
+  expect(onUnavailable).not.toHaveBeenCalled();
+  expect(mockHls).toHaveLength(1);
+});
 jest.mock('@/lib/live-playlist-loader', () => {
   const actual = jest.requireActual('@/lib/live-playlist-loader');
   return { ...actual, livePlaylistLoader: jest.fn(actual.livePlaylistLoader) };

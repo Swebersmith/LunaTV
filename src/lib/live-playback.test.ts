@@ -1,4 +1,27 @@
-import { liveBufferAhead, liveStartupBuffer } from './live-playback';
+import { TextDecoder, TextEncoder } from 'util';
+
+import {
+  liveBufferAhead,
+  liveResourceLimited,
+  liveStartupBuffer,
+} from './live-playback';
+
+Object.assign(global, { TextDecoder, TextEncoder });
+
+it('recognizes platform resource errors without treating ordinary upstream failures as a platform outage', () => {
+  expect(liveResourceLimited(500, '<h1>Error 1102</h1>')).toBe(true);
+  expect(liveResourceLimited(530, 'error code: 1102')).toBe(true);
+  expect(
+    liveResourceLimited(
+      500,
+      new TextEncoder().encode('Worker exceeded resource limits').buffer
+    )
+  ).toBe(true);
+  expect(liveResourceLimited(200, 'Error 1102')).toBe(false);
+  expect(liveResourceLimited(503, 'upstream temporarily unavailable')).toBe(
+    false
+  );
+});
 
 it('limits initial buffering to what short or unusually long live windows can supply', () => {
   expect(

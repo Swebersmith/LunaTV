@@ -1,5 +1,24 @@
 import type { HlsConfig } from 'hls.js';
 
+export function liveResourceLimited(status: number | undefined, body: unknown) {
+  if (!status || status < 500) return false;
+  let text = '';
+  if (typeof body === 'string') text = body.slice(0, 16384);
+  else if (Object.prototype.toString.call(body) === '[object ArrayBuffer]') {
+    try {
+      // slice performs a native brand check and also handles buffers from
+      // another window/realm. Only inspect a bounded error-page prefix.
+      const prefix = ArrayBuffer.prototype.slice.call(body, 0, 16384);
+      text = new TextDecoder().decode(new Uint8Array(prefix));
+    } catch {
+      return false;
+    }
+  }
+  return /(?:error(?:\s+code)?\s*:?\s*1102\b|worker exceeded resource limits)/i.test(
+    text
+  );
+}
+
 export function liveHlsConfig(): Partial<HlsConfig> {
   const retry = { maxNumRetry: 2, retryDelayMs: 500, maxRetryDelayMs: 2000 };
   const playlist = {
