@@ -24,7 +24,7 @@ import {
 } from '@/lib/db.client';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
-import { attachVodHls } from '@/lib/vod-playback';
+import { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from '@/lib/vod-playback';
 import { buildJuliangPlayerUrl, isJuliangPlayerUrl, readVodPlayerPreferences, saveVodPlayerPreferences, VodPlayerPreferences } from '@/lib/vod-player';
 
 import EpisodeSelector from '@/components/EpisodeSelector';
@@ -210,6 +210,10 @@ function PlayPageClient() {
 
   const artPlayerRef = useRef<any>(null);
   const artRef = useRef<HTMLDivElement | null>(null);
+  // Persist the original source timeline so history/skip settings remain valid
+  // when segment filtering is toggled or an older viewing record is restored.
+  const sourceTime = (player = artPlayerRef.current) => vodSourceTime(player?.video, player?.currentTime || 0);
+  const sourceDuration = (player = artPlayerRef.current) => vodSourceDuration(player?.video, player?.duration || 0);
 
   // Wake Lock 相关
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -539,7 +543,7 @@ function PlayPageClient() {
               ? '设置片头时间'
               : `${formatTime(skipConfigRef.current.intro_time)}`,
           onClick: function () {
-            const currentTime = artPlayerRef.current?.currentTime || 0;
+            const currentTime = sourceTime();
             if (currentTime > 0) {
               const newConfig = {
                 ...skipConfigRef.current,
@@ -561,8 +565,7 @@ function PlayPageClient() {
           onClick: function () {
             const outroTime =
               -(
-                artPlayerRef.current?.duration -
-                artPlayerRef.current?.currentTime
+                sourceDuration() - sourceTime()
               ) || 0;
             if (outroTime < 0) {
               const newConfig = {
@@ -823,7 +826,7 @@ function PlayPageClient() {
       setIsVideoLoading(true);
 
       // 记录当前播放进度（仅在同一集数切换时恢复）
-      const currentPlayTime = artPlayerRef.current?.currentTime || 0;
+      const currentPlayTime = sourceTime();
       console.log('换源前当前播放时间:', currentPlayTime);
 
       // 清除前一个历史记录
@@ -1052,8 +1055,8 @@ function PlayPageClient() {
     }
 
     const player = artPlayerRef.current;
-    const currentTime = player.currentTime || 0;
-    const duration = player.duration || 0;
+    const currentTime = sourceTime(player);
+    const duration = sourceDuration(player);
 
     // 视频尚未开始或时长无效时不保存。
     if (currentTime < 1 || !duration) {
@@ -1211,7 +1214,7 @@ function PlayPageClient() {
   const handlePlayerPreferenceChange = (value: VodPlayerPreferences) => {
     if (value.player !== activePlayer) {
       if (artPlayerRef.current) {
-        builtinResumeRef.current = { url: videoUrl, time: artPlayerRef.current.currentTime || 0 };
+        builtinResumeRef.current = { url: videoUrl, time: sourceTime() };
         saveCurrentPlayProgress();
         cleanupPlayer();
         releaseWakeLock();
@@ -1338,7 +1341,16 @@ function PlayPageClient() {
               video,
               url,
               () => setError('当前浏览器不支持 HLS 视频，请使用新版浏览器。'),
-              blockAdEnabledRef.current
+              blockAdEnabledRef.current,
+              (result) => {
+                const removedSeconds = result.removed.reduce((sum, range) => sum + range.end - range.start, 0);
+                artPlayerRef.current?.setting.update({
+                  name: 'blockAds',
+                  tooltip: removedSeconds > 0
+                    ? `已过滤 ${removedSeconds.toFixed(1)} 秒`
+                    : result.reason === 'unsupported' ? '已开启 · 当前片源暂不支持' : '已开启 · 未命中广告规则',
+                });
+              }
             );
             ensureVideoSource(video, url);
             if (!hls) return;
@@ -1372,15 +1384,16 @@ function PlayPageClient() {
           {
             name: 'blockAds',
             html: '去广告',
-            tooltip: blockAdEnabled ? '已开启' : '已关闭',
+            tooltip: !Hls.isSupported() ? '原生播放模式不支持分片过滤' : blockAdEnabled ? '已开启 · 分片过滤' : '已关闭',
             onClick() {
+              if (!Hls.isSupported()) return '原生播放模式不支持分片过滤';
               const enabled = !blockAdEnabledRef.current;
               try {
                 localStorage.setItem('enable_blockad', String(enabled));
               } catch {
                 // The current session can still toggle without local storage.
               }
-              resumeTimeRef.current = artPlayerRef.current?.currentTime || 0;
+              resumeTimeRef.current = sourceTime();
               cleanupPlayer();
               blockAdEnabledRef.current = enabled;
               setBlockAdEnabled(enabled);
@@ -1420,7 +1433,7 @@ function PlayPageClient() {
                 ? '设置片头时间'
                 : `${formatTime(skipConfigRef.current.intro_time)}`,
             onClick: function () {
-              const currentTime = artPlayerRef.current?.currentTime || 0;
+              const currentTime = sourceTime();
               if (currentTime > 0) {
                 const newConfig = {
                   ...skipConfigRef.current,
@@ -1442,8 +1455,7 @@ function PlayPageClient() {
             onClick: function () {
               const outroTime =
                 -(
-                  artPlayerRef.current?.duration -
-                  artPlayerRef.current?.currentTime
+                  sourceDuration() - sourceTime()
                 ) || 0;
               if (outroTime < 0) {
                 const newConfig = {
@@ -1512,7 +1524,7 @@ function PlayPageClient() {
         if (resumeTimeRef.current && resumeTimeRef.current > 0) {
           try {
             const duration = artPlayerRef.current.duration || 0;
-            let target = resumeTimeRef.current;
+            let target = vodFilteredTime(artPlayerRef.current.video, resumeTimeRef.current);
             if (duration && target >= duration - 2) {
               target = Math.max(0, duration - 5);
             }
@@ -1550,8 +1562,8 @@ function PlayPageClient() {
       artPlayerRef.current.on('video:timeupdate', () => {
         if (!skipConfigRef.current.enable) return;
 
-        const currentTime = artPlayerRef.current.currentTime || 0;
-        const duration = artPlayerRef.current.duration || 0;
+        const currentTime = sourceTime();
+        const duration = sourceDuration();
         const now = Date.now();
 
         // 限制跳过检查频率为1.5秒一次
@@ -1563,7 +1575,7 @@ function PlayPageClient() {
           skipConfigRef.current.intro_time > 0 &&
           currentTime < skipConfigRef.current.intro_time
         ) {
-          artPlayerRef.current.currentTime = skipConfigRef.current.intro_time;
+          artPlayerRef.current.currentTime = vodFilteredTime(artPlayerRef.current.video, skipConfigRef.current.intro_time);
           artPlayerRef.current.notice.show = `已跳过片头 (${formatTime(
             skipConfigRef.current.intro_time
           )})`;
@@ -1574,7 +1586,7 @@ function PlayPageClient() {
           skipConfigRef.current.outro_time < 0 &&
           duration > 0 &&
           currentTime >
-          artPlayerRef.current.duration + skipConfigRef.current.outro_time
+          duration + skipConfigRef.current.outro_time
         ) {
           if (
             currentEpisodeIndexRef.current <

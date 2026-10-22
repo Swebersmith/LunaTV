@@ -7,6 +7,7 @@ import type {
 } from 'hls.js';
 import Hls from 'hls.js';
 
+import { adFixture } from './__fixtures__/vod-playlist';
 import { attachVodHls } from './vod-playback';
 
 let video: HTMLVideoElement;
@@ -69,7 +70,7 @@ function playFixture(playlist: string, blockAds = true) {
 }
 
 it.each([true, false])(
-  'uses the original discontinuity filtering with ad blocking set to %s',
+  'preserves normal programme discontinuities with ad blocking set to %s',
   (blockAds) => {
     const playlist = [
       '#EXTM3U',
@@ -88,9 +89,9 @@ it.each([true, false])(
     ].join('\n');
     const { hls, parsed } = playFixture(playlist, blockAds);
     expect(hls).toBe(video.hls);
-    expect(parsed?.details.fragments.map((fragment) => fragment.cc)).toEqual(
-      blockAds ? [0, 0, 0] : [7, 8, 9]
-    );
+    expect(parsed?.details.fragments.map((fragment) => fragment.cc)).toEqual([
+      7, 8, 9,
+    ]);
     expect(parsed?.details.totalduration).toBe(18);
     expect(parsed?.details.live).toBe(false);
     expect(unsupported).not.toHaveBeenCalled();
@@ -98,7 +99,7 @@ it.each([true, false])(
 );
 
 it.each([true, false])(
-  'keeps original segment timing and encryption without ad seeks with blocking set to %s',
+  'keeps an ambiguous short clip intact with blocking set to %s',
   (blockAds) => {
     const playlist = [
       '#EXTM3U',
@@ -122,9 +123,7 @@ it.each([true, false])(
     const { hls, parsed } = playFixture(playlist, blockAds);
     const fragments = parsed?.details.fragments || [];
     expect(fragments.map((fragment) => fragment.sn)).toEqual([20, 21, 22, 23]);
-    expect(fragments.map((fragment) => fragment.cc)).toEqual(
-      blockAds ? [0, 0, 0, 0] : [7, 8, 8, 9]
-    );
+    expect(fragments.map((fragment) => fragment.cc)).toEqual([7, 8, 8, 9]);
     expect(fragments.every((fragment) => !fragment.gap)).toBe(true);
     expect(fragments[fragments.length - 1].decryptdata?.iv?.[15]).toBe(23);
     expect(parsed?.details.totalduration).toBeCloseTo(17.04);
@@ -140,6 +139,29 @@ it.each([true, false])(
     video.currentTime = 7;
     video.dispatchEvent(new Event('timeupdate'));
     expect(video.currentTime).toBe(7);
+  }
+);
+
+it.each([true, false])(
+  'parses a real rewritten HLS timeline with segment filtering set to %s',
+  (blockAds) => {
+    const key = '#EXT-X-KEY:METHOD=AES-128,URI="key.bin"';
+    const { hls, parsed } = playFixture(adFixture({ key }), blockAds);
+    const fragments = parsed?.details.fragments || [];
+    expect(fragments).toHaveLength(blockAds ? 48 : 55);
+    expect(parsed?.details.totalduration).toBeCloseTo(
+      48 * 6.006 + (blockAds ? 0 : 12.5)
+    );
+    const next = fragments.find(
+      (fragment) => fragment.relurl === '/video/after-0.ts'
+    );
+    expect(next?.start).toBeCloseTo(24 * 6.006 + (blockAds ? 0 : 12.5));
+    expect(next?.cc).toBe(9);
+    expect(next?.decryptdata?.iv?.[15]).toBe(51);
+    expect(video.vodAdFilter?.removed.length || 0).toBe(blockAds ? 1 : 0);
+    expect(hls?.config.loader).toBe(
+      blockAds ? hls?.config.loader : Hls.DefaultConfig.loader
+    );
   }
 );
 
