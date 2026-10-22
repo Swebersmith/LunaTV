@@ -14,10 +14,14 @@ import {
   X,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { clearAdminConfigPrefetch, prefetchAdminConfig } from '@/lib/admin-config-client';
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
+import { useMotionPresence } from '@/hooks/useMotionPresence';
+
+import NavigationLink from '@/components/NavigationLink';
 
 interface AuthInfo {
   username?: string;
@@ -32,10 +36,20 @@ export const UserMenu: React.FC = () => {
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
   const [storageType, setStorageType] = useState<string>('localstorage');
   const [mounted, setMounted] = useState(false);
+  const menuMotion = useMotionPresence(isOpen);
+  const settingsMotion = useMotionPresence(isSettingsOpen);
+  const passwordMotion = useMotionPresence(isChangePasswordOpen);
+  const settingsInitialized = useRef(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const passwordRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+  const settingsTitleId = useId();
+  const passwordTitleId = useId();
 
   // Body 滚动锁定 - 使用 overflow 方式避免布局问题
   useEffect(() => {
-    if (isSettingsOpen || isChangePasswordOpen) {
+    if (settingsMotion.present || passwordMotion.present) {
       const body = document.body;
       const html = document.documentElement;
 
@@ -54,7 +68,38 @@ export const UserMenu: React.FC = () => {
         html.style.overflow = originalHtmlOverflow;
       };
     }
-  }, [isSettingsOpen, isChangePasswordOpen]);
+  }, [settingsMotion.present, passwordMotion.present]);
+
+  useEffect(() => {
+    const panel = isSettingsOpen ? settingsRef.current : isChangePasswordOpen ? passwordRef.current : null;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const menuTrigger = menuButtonRef.current;
+    panel?.focus({ preventScroll: true });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        setIsSettingsOpen(false);
+        setIsChangePasswordOpen(false);
+      }
+      if (event.key !== 'Tab' || !panel) return;
+      const items = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), [tabindex="0"]'));
+      const first = items[0], last = items[items.length - 1];
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel)) {
+        event.preventDefault(); first.focus();
+      }
+    };
+    if (isOpen || panel) document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (panel) {
+        const target = previousFocus?.isConnected && previousFocus !== document.body && previousFocus !== document.documentElement ? previousFocus : menuTrigger;
+        target?.focus({ preventScroll: true });
+      }
+    };
+  }, [isOpen, isSettingsOpen, isChangePasswordOpen]);
 
   // 设置相关状态
   const [defaultAggregateSearch, setDefaultAggregateSearch] = useState(true);
@@ -117,12 +162,14 @@ export const UserMenu: React.FC = () => {
 
   // 从 localStorage 读取设置
   useEffect(() => {
+    if ((!isOpen && !isSettingsOpen) || settingsInitialized.current) return;
+    settingsInitialized.current = true;
     if (typeof window !== 'undefined') {
       const savedAggregateSearch = localStorage.getItem(
         'defaultAggregateSearch'
       );
       if (savedAggregateSearch !== null) {
-        setDefaultAggregateSearch(JSON.parse(savedAggregateSearch));
+        setDefaultAggregateSearch(savedAggregateSearch === 'true');
       }
 
       const savedDoubanDataSource = localStorage.getItem('doubanDataSource');
@@ -171,24 +218,24 @@ export const UserMenu: React.FC = () => {
       const savedEnableOptimization =
         localStorage.getItem('enableOptimization');
       if (savedEnableOptimization !== null) {
-        setEnableOptimization(JSON.parse(savedEnableOptimization));
+        setEnableOptimization(savedEnableOptimization === 'true');
       }
 
       const savedFluidSearch = localStorage.getItem('fluidSearch');
       const defaultFluidSearch =
         (window as any).RUNTIME_CONFIG?.FLUID_SEARCH !== false;
       if (savedFluidSearch !== null) {
-        setFluidSearch(JSON.parse(savedFluidSearch));
+        setFluidSearch(savedFluidSearch === 'true');
       } else if (defaultFluidSearch !== undefined) {
         setFluidSearch(defaultFluidSearch);
       }
 
       const savedLiveDirectConnect = localStorage.getItem('liveDirectConnect');
       if (savedLiveDirectConnect !== null) {
-        setLiveDirectConnect(JSON.parse(savedLiveDirectConnect));
+        setLiveDirectConnect(savedLiveDirectConnect === 'true');
       }
     }
-  }, []);
+  }, [isOpen, isSettingsOpen]);
 
   // 点击外部区域关闭下拉框
   useEffect(() => {
@@ -225,8 +272,15 @@ export const UserMenu: React.FC = () => {
     }
   }, [isDoubanImageProxyDropdownOpen]);
 
+  const warmAdmin = () => {
+    if (authInfo?.role !== 'owner' && authInfo?.role !== 'admin') return;
+    router.prefetch('/admin');
+    prefetchAdminConfig();
+  };
+
   const handleMenuClick = () => {
-    setIsOpen(!isOpen);
+    if (!isOpen) warmAdmin();
+    setIsOpen(previous => !previous);
   };
 
   const handleCloseMenu = () => {
@@ -234,6 +288,7 @@ export const UserMenu: React.FC = () => {
   };
 
   const handleLogout = async () => {
+    clearAdminConfigPrefetch();
     try {
       await fetch('/api/logout', {
         method: 'POST',
@@ -243,10 +298,6 @@ export const UserMenu: React.FC = () => {
       console.error('注销请求失败:', error);
     }
     window.location.href = '/';
-  };
-
-  const handleAdminPanel = () => {
-    router.push('/admin');
   };
 
   const handleChangePassword = () => {
@@ -452,16 +503,17 @@ export const UserMenu: React.FC = () => {
   };
 
   // 菜单面板内容
-  const menuPanel = (
+  const menuPanel = menuMotion.present && (
     <>
       {/* 背景遮罩 - 普通菜单无需模糊 */}
       <div
-        className='fixed inset-0 bg-transparent z-[1000]'
+        className='motion-menu-backdrop fixed inset-0 bg-transparent z-[1000]'
+        data-state={menuMotion.state}
         onClick={handleCloseMenu}
       />
 
       {/* 菜单面板 */}
-      <div className='fixed top-14 right-4 w-56 bg-white dark:bg-gray-900 rounded-lg shadow-xl z-[1001] border border-gray-200/50 dark:border-gray-700/50 overflow-hidden select-none'>
+      <div id={menuId} data-state={menuMotion.state} aria-hidden={!isOpen} className='crayon-user-menu motion-menu fixed top-14 right-4 w-56 bg-white dark:bg-gray-900 rounded-lg shadow-xl z-[1001] border border-gray-200/50 dark:border-gray-700/50 overflow-hidden select-none'>
         {/* 用户信息区域 */}
         <div className='px-3 py-2.5 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-800 dark:to-gray-800/50'>
           <div className='space-y-1'>
@@ -505,13 +557,17 @@ export const UserMenu: React.FC = () => {
 
           {/* 管理面板按钮 */}
           {showAdminPanel && (
-            <button
-              onClick={handleAdminPanel}
+            <NavigationLink
+              href='/admin'
+              prefetch={true}
+              onPointerEnter={warmAdmin}
+              onFocus={warmAdmin}
+              onClick={handleCloseMenu}
               className='w-full px-3 py-2 text-left flex items-center gap-2.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-sm'
             >
               <Shield className='w-4 h-4 text-gray-500 dark:text-gray-400' />
               <span className='font-medium'>管理面板</span>
-            </button>
+            </NavigationLink>
           )}
 
           {/* 修改密码按钮 */}
@@ -543,11 +599,12 @@ export const UserMenu: React.FC = () => {
   );
 
   // 设置面板内容
-  const settingsPanel = (
+  const settingsPanel = settingsMotion.present && (
     <>
       {/* 背景遮罩 */}
       <div
-        className='fixed inset-0 bg-black/50 backdrop-blur-sm z-[1000]'
+        className='motion-backdrop fixed inset-0 bg-black/50 z-[1000]'
+        data-state={settingsMotion.state}
         onClick={handleCloseSettings}
         onTouchMove={(e) => {
           // 只阻止滚动，允许其他触摸事件
@@ -564,7 +621,14 @@ export const UserMenu: React.FC = () => {
 
       {/* 设置面板 */}
       <div
-        className='fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-xl max-h-[90vh] bg-white dark:bg-gray-900 rounded-xl shadow-xl z-[1001] flex flex-col'
+        ref={settingsRef}
+        role='dialog'
+        aria-modal='true'
+        aria-hidden={!isSettingsOpen}
+        aria-labelledby={settingsTitleId}
+        tabIndex={-1}
+        data-state={settingsMotion.state}
+        className='crayon-dialog motion-dialog fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100%_-_2rem)] max-w-xl max-h-[90vh] bg-white dark:bg-gray-900 rounded-xl shadow-xl z-[1001] flex flex-col outline-none'
       >
         {/* 内容容器 - 独立的滚动区域 */}
         <div
@@ -578,7 +642,7 @@ export const UserMenu: React.FC = () => {
           {/* 标题栏 */}
           <div className='flex items-center justify-between mb-6'>
             <div className='flex items-center gap-3'>
-              <h3 className='text-xl font-bold text-gray-800 dark:text-gray-200'>
+              <h3 id={settingsTitleId} className='text-xl font-bold text-gray-800 dark:text-gray-200'>
                 本地设置
               </h3>
               <button
@@ -827,6 +891,7 @@ export const UserMenu: React.FC = () => {
                     type='checkbox'
                     className='sr-only peer'
                     checked={defaultAggregateSearch}
+                    aria-label='默认聚合搜索结果'
                     onChange={(e) => handleAggregateToggle(e.target.checked)}
                   />
                   <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
@@ -851,6 +916,7 @@ export const UserMenu: React.FC = () => {
                     type='checkbox'
                     className='sr-only peer'
                     checked={enableOptimization}
+                    aria-label='优选和测速'
                     onChange={(e) => handleOptimizationToggle(e.target.checked)}
                   />
                   <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
@@ -875,6 +941,7 @@ export const UserMenu: React.FC = () => {
                     type='checkbox'
                     className='sr-only peer'
                     checked={fluidSearch}
+                    aria-label='流式搜索输出'
                     onChange={(e) => handleFluidSearchToggle(e.target.checked)}
                   />
                   <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
@@ -921,11 +988,12 @@ export const UserMenu: React.FC = () => {
   );
 
   // 修改密码面板内容
-  const changePasswordPanel = (
+  const changePasswordPanel = passwordMotion.present && (
     <>
       {/* 背景遮罩 */}
       <div
-        className='fixed inset-0 bg-black/50 backdrop-blur-sm z-[1000]'
+        className='motion-backdrop fixed inset-0 bg-black/50 z-[1000]'
+        data-state={passwordMotion.state}
         onClick={handleCloseChangePassword}
         onTouchMove={(e) => {
           // 只阻止滚动，允许其他触摸事件
@@ -942,7 +1010,14 @@ export const UserMenu: React.FC = () => {
 
       {/* 修改密码面板 */}
       <div
-        className='fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-gray-900 rounded-xl shadow-xl z-[1001] overflow-hidden'
+        ref={passwordRef}
+        role='dialog'
+        aria-modal='true'
+        aria-hidden={!isChangePasswordOpen}
+        aria-labelledby={passwordTitleId}
+        tabIndex={-1}
+        data-state={passwordMotion.state}
+        className='crayon-dialog motion-dialog fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100%_-_2rem)] max-w-md bg-white dark:bg-gray-900 rounded-xl shadow-xl z-[1001] overflow-hidden outline-none'
       >
         {/* 内容容器 - 独立的滚动区域 */}
         <div
@@ -958,7 +1033,7 @@ export const UserMenu: React.FC = () => {
         >
           {/* 标题栏 */}
           <div className='flex items-center justify-between mb-6'>
-            <h3 className='text-xl font-bold text-gray-800 dark:text-gray-200'>
+            <h3 id={passwordTitleId} className='text-xl font-bold text-gray-800 dark:text-gray-200'>
               修改密码
             </h3>
             <button
@@ -1043,22 +1118,27 @@ export const UserMenu: React.FC = () => {
     <>
       <div className='relative'>
         <button
+          ref={menuButtonRef}
           onClick={handleMenuClick}
+          onPointerEnter={warmAdmin}
+          onFocus={warmAdmin}
           className='w-10 h-10 p-2 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200/50 dark:text-gray-300 dark:hover:bg-gray-700/50 transition-colors'
-          aria-label='User Menu'
+          aria-label='用户菜单'
+          aria-expanded={isOpen}
+          aria-controls={menuId}
         >
           <User className='w-full h-full' />
         </button>
       </div>
 
       {/* 使用 Portal 将菜单面板渲染到 document.body */}
-      {isOpen && mounted && createPortal(menuPanel, document.body)}
+      {menuMotion.present && mounted && createPortal(menuPanel, document.body)}
 
       {/* 使用 Portal 将设置面板渲染到 document.body */}
-      {isSettingsOpen && mounted && createPortal(settingsPanel, document.body)}
+      {settingsMotion.present && mounted && createPortal(settingsPanel, document.body)}
 
       {/* 使用 Portal 将修改密码面板渲染到 document.body */}
-      {isChangePasswordOpen &&
+      {passwordMotion.present &&
         mounted &&
         createPortal(changePasswordPanel, document.body)}
     </>

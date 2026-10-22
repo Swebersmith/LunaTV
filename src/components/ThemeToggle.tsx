@@ -44,7 +44,7 @@ export function ThemeToggle() {
     // 检查浏览器是否支持 View Transitions API
     const targetTheme = resolvedTheme === 'dark' ? 'light' : 'dark';
     setThemeColor(targetTheme);
-    if (!(document as any).startViewTransition) {
+    if (!(document as any).startViewTransition || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
       setTheme(targetTheme);
       return;
     }

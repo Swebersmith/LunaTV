@@ -1,6 +1,4 @@
-/* eslint-disable react-hooks/exhaustive-deps */
-
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 interface CapsuleSwitchProps {
   options: { label: string; value: string }[];
@@ -25,7 +23,7 @@ const CapsuleSwitch: React.FC<CapsuleSwitchProps> = ({
   const activeIndex = options.findIndex((opt) => opt.value === active);
 
   // 更新指示器位置
-  const updateIndicatorPosition = () => {
+  const updateIndicatorPosition = useCallback(() => {
     if (
       activeIndex >= 0 &&
       buttonRefs.current[activeIndex] &&
@@ -45,19 +43,15 @@ const CapsuleSwitch: React.FC<CapsuleSwitchProps> = ({
         }
       }
     }
-  };
+  }, [activeIndex]);
 
   // 组件挂载时立即计算初始位置
   useEffect(() => {
-    const timeoutId = setTimeout(updateIndicatorPosition, 0);
-    return () => clearTimeout(timeoutId);
-  }, []);
-
-  // 监听选中项变化
-  useEffect(() => {
-    const timeoutId = setTimeout(updateIndicatorPosition, 0);
-    return () => clearTimeout(timeoutId);
-  }, [activeIndex]);
+    updateIndicatorPosition();
+    const observer = new ResizeObserver(updateIndicatorPosition);
+    if (containerRef.current) observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [updateIndicatorPosition]);
 
   return (
     <div
@@ -69,9 +63,9 @@ const CapsuleSwitch: React.FC<CapsuleSwitchProps> = ({
       {/* 滑动的白色背景指示器 */}
       {indicatorStyle.width > 0 && (
         <div
-          className='crayon-tab-indicator absolute top-1 bottom-1 rounded-full transition-all duration-300 ease-out'
+          className='crayon-tab-indicator absolute left-0 top-1 bottom-1 rounded-full'
           style={{
-            left: `${indicatorStyle.left}px`,
+            transform: `translateX(${indicatorStyle.left}px)`,
             width: `${indicatorStyle.width}px`,
           }}
         />

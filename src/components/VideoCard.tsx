@@ -468,7 +468,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   return (
     <>
       <div
-        className='group relative min-w-0 w-full rounded-lg bg-transparent cursor-pointer transition-all duration-300 ease-in-out hover:scale-[1.05] hover:z-[500]'
+        className='crayon-video-card group relative min-w-0 w-full rounded-lg bg-transparent cursor-pointer hover:z-[500]'
         onClick={handleClick}
         style={{
           // 禁用所有默认的长按和选择效果

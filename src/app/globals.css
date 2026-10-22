@@ -2,6 +2,114 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --motion-spring: cubic-bezier(0.22, 1.35, 0.38, 1);
+  --motion-settle: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Animate surfaces, leaving playback and fixed navigation in place. No
+   permanent compositor layers or page-wide JavaScript animation listeners. */
+@keyframes motion-page-in {
+  from { opacity: 0.5; }
+  to { opacity: 1; }
+}
+@keyframes motion-rise {
+  from { opacity: 0.45; translate: 0 10px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes motion-pop {
+  0% { opacity: 0; scale: 0.92; translate: 0 12px; }
+  68% { opacity: 1; scale: 1.012; translate: 0 -2px; }
+  100% { opacity: 1; scale: 1; translate: 0 0; }
+}
+@keyframes motion-close {
+  to { opacity: 0; scale: 0.97; translate: 0 6px; }
+}
+@keyframes motion-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.motion-page { animation: motion-page-in 260ms var(--motion-settle); }
+.crayon-home section,
+.crayon-search-intro,
+.motion-admin-section { animation: motion-rise 360ms var(--motion-settle); }
+.crayon-login-card { animation: motion-pop 400ms var(--motion-settle); }
+.motion-dialog,
+.motion-pop { animation: motion-pop 340ms var(--motion-settle); }
+.motion-menu {
+  transform-origin: top right;
+  animation: motion-pop 300ms var(--motion-settle);
+}
+.motion-backdrop { animation: motion-fade 150ms ease-out; }
+.motion-dialog[data-state='closed'],
+.motion-menu[data-state='closed'] {
+  animation: motion-close 160ms ease-in both;
+  pointer-events: none;
+}
+.motion-backdrop[data-state='closed'] {
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+  pointer-events: none;
+}
+.motion-menu-backdrop[data-state='closed'] { pointer-events: none; }
+.motion-disclosure {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 160ms var(--motion-settle), opacity 160ms ease;
+  animation: motion-rise 260ms var(--motion-settle);
+}
+.motion-disclosure[data-state='closed'] {
+  animation: none;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+.motion-chevron { transition: transform 300ms var(--motion-spring); }
+.motion-chevron[data-expanded='true'] { transform: rotate(180deg); }
+.crayon-tab-indicator {
+  transition: transform 380ms var(--motion-spring), width 260ms var(--motion-settle);
+}
+.crayon-video-card {
+  transition: transform 350ms var(--motion-spring), opacity 180ms ease;
+}
+.crayon-video-card:active { transform: scale(0.975); }
+.crayon-shell button:not(:where(.art-video-player button, [data-media-player] button)),
+.crayon-dialog button,
+.crayon-user-menu :is(button, a) {
+  touch-action: manipulation;
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform, scale;
+  transition-duration: 220ms;
+  transition-timing-function: var(--motion-spring);
+}
+.crayon-shell button:active:not(:disabled, :where(.art-video-player button, [data-media-player] button)),
+.crayon-dialog button:active:not(:disabled),
+.crayon-user-menu :is(button, a):active { scale: 0.96; }
+.crayon-sidebar a,
+.crayon-mobile-nav a {
+  touch-action: manipulation;
+  transition: transform 300ms var(--motion-spring), background-color 180ms ease, color 180ms ease;
+}
+.crayon-mobile-nav a:active { transform: scale(0.9); }
+@media (hover: hover) and (pointer: fine) {
+  .crayon-video-card:hover { transform: translateY(-5px) scale(1.035); }
+  .crayon-video-card:hover:active { transform: translateY(-2px) scale(0.99); }
+  .crayon-sidebar a:hover { transform: translateX(3px); }
+  .crayon-user-menu :is(button, a):hover > svg { rotate: -8deg; }
+  .crayon-user-menu svg { transition: rotate 300ms var(--motion-spring); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .crayon-video-card:hover, .crayon-video-card:active,
+  .crayon-sidebar a:hover, .crayon-mobile-nav a:active { transform: none; }
+  .crayon-shell button:active, .crayon-dialog button:active,
+  .crayon-user-menu :is(button, a):active { scale: 1; }
+}
+
 @layer utilities {
   .scrollbar-hide {
     -ms-overflow-style: none; /* IE and Edge */
@@ -707,7 +815,7 @@ html.dark body {
 
 ::view-transition-old(root),
 ::view-transition-new(root) {
-  animation-duration: 0.8s;
+  animation-duration: 0.45s;
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   animation-fill-mode: both;
 }
