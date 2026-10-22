@@ -67,7 +67,7 @@ export function VodPlayerSelector({
                     entry: event.target.value as JuliangEntry,
                   })
                 }
-                className='rounded-lg border border-gray-200 bg-white px-2 py-2 dark:border-gray-600 dark:bg-gray-800'
+                className='min-w-[8rem] rounded-lg border border-gray-200 bg-white py-2 pl-3 pr-8 dark:border-gray-600 dark:bg-gray-800'
               >
                 {Object.entries(JULIANG_ENTRIES).map(([key, { name }]) => (
                   <option key={key} value={key}>
