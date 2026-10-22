@@ -8,7 +8,8 @@ const nextConfig = {
   },
 
   reactStrictMode: false,
-  swcMinify: true,
+  // Preserve deferred workerd builtin imports for the OpenNext 1.3 packager.
+  swcMinify: false,
 
   experimental: {
     instrumentationHook: process.env.NODE_ENV === 'production',
