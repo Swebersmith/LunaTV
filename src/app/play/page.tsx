@@ -25,9 +25,11 @@ import {
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 import { attachVodHls } from '@/lib/vod-playback';
+import { buildJuliangPlayerUrl, isJuliangPlayerUrl, readVodPlayerPreferences, saveVodPlayerPreferences, VodPlayerPreferences } from '@/lib/vod-player';
 
 import EpisodeSelector from '@/components/EpisodeSelector';
 import PageLayout from '@/components/PageLayout';
+import { JuliangPlayer, VodPlayerSelector } from '@/components/VodPlayerSelector';
 
 // Wake Lock API 类型声明
 interface WakeLockSentinel {
@@ -143,6 +145,16 @@ function PlayPageClient() {
 
   // 视频播放地址
   const [videoUrl, setVideoUrl] = useState('');
+  const [playerPreferences, setPlayerPreferences] = useState<VodPlayerPreferences>({
+    player: 'artplayer', entry: 'main', smartMatch: true,
+  });
+  useEffect(() => setPlayerPreferences(readVodPlayerPreferences()), []);
+  const fullPlayerSource = isJuliangPlayerUrl(videoUrl);
+  const activePlayer = fullPlayerSource ? 'juliang' : playerPreferences.player;
+  const externalPlayerUrl = buildJuliangPlayerUrl(videoUrl, playerPreferences.entry, playerPreferences.smartMatch);
+  const builtinResumeRef = useRef<{ url: string; time: number } | null>(null);
+  const episodeAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const volumeRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 总集数
   const totalEpisodes = detail?.episodes?.length || 0;
@@ -470,6 +482,10 @@ function PlayPageClient() {
 
   // 清理播放器资源的统一函数
   const cleanupPlayer = () => {
+    if (episodeAdvanceTimerRef.current) clearTimeout(episodeAdvanceTimerRef.current);
+    if (volumeRestoreTimerRef.current) clearTimeout(volumeRestoreTimerRef.current);
+    episodeAdvanceTimerRef.current = null;
+    volumeRestoreTimerRef.current = null;
     if (artPlayerRef.current) {
       try {
         // 销毁 HLS 实例
@@ -935,7 +951,10 @@ function PlayPageClient() {
     // 忽略输入框中的按键事件
     if (
       (e.target as HTMLElement).tagName === 'INPUT' ||
-      (e.target as HTMLElement).tagName === 'TEXTAREA'
+      (e.target as HTMLElement).tagName === 'TEXTAREA' ||
+      (e.target as HTMLElement).tagName === 'SELECT' ||
+      (e.target as HTMLElement).tagName === 'BUTTON' ||
+      (e.target as HTMLElement).tagName === 'A'
     )
       return;
 
@@ -1189,7 +1208,31 @@ function PlayPageClient() {
     }
   };
 
+  const handlePlayerPreferenceChange = (value: VodPlayerPreferences) => {
+    if (value.player !== activePlayer) {
+      if (artPlayerRef.current) {
+        builtinResumeRef.current = { url: videoUrl, time: artPlayerRef.current.currentTime || 0 };
+        saveCurrentPlayProgress();
+        cleanupPlayer();
+        releaseWakeLock();
+      }
+      if (value.player === 'artplayer') {
+        // External players own a separate timeline (ad filtering may shorten it).
+        // Restore only the built-in position for this exact episode/source.
+        resumeTimeRef.current = builtinResumeRef.current?.url === videoUrl ? builtinResumeRef.current.time : 0;
+        setIsVideoLoading(true);
+      }
+    }
+    setPlayerPreferences(value);
+    saveVodPlayerPreferences(value);
+  };
+
   useEffect(() => {
+    if (activePlayer !== 'artplayer') {
+      cleanupPlayer();
+      releaseWakeLock();
+      return;
+    }
     if (
       !Artplayer ||
       !Hls ||
@@ -1481,7 +1524,8 @@ function PlayPageClient() {
         }
         resumeTimeRef.current = null;
 
-        setTimeout(() => {
+        volumeRestoreTimerRef.current = setTimeout(() => {
+          if (!artPlayerRef.current) return;
           if (
             Math.abs(artPlayerRef.current.volume - lastVolumeRef.current) > 0.01
           ) {
@@ -1558,7 +1602,7 @@ function PlayPageClient() {
         const d = detailRef.current;
         const idx = currentEpisodeIndexRef.current;
         if (d && d.episodes && idx < d.episodes.length - 1) {
-          setTimeout(() => {
+          episodeAdvanceTimerRef.current = setTimeout(() => {
             setCurrentEpisodeIndex(idx + 1);
           }, 1000);
         }
@@ -1587,7 +1631,7 @@ function PlayPageClient() {
       console.error('创建播放器失败:', err);
       setError('播放器初始化失败');
     }
-  }, [Artplayer, Hls, videoUrl, loading, blockAdEnabled]);
+  }, [Artplayer, Hls, videoUrl, loading, blockAdEnabled, activePlayer]);
 
   // 当组件卸载时清理定时器、Wake Lock 和播放器资源
   useEffect(() => {
@@ -1776,6 +1820,12 @@ function PlayPageClient() {
             )}
           </h1>
         </div>
+        <VodPlayerSelector
+          value={{ ...playerPreferences, player: activePlayer }}
+          onChange={handlePlayerPreferenceChange}
+          externalUrl={externalPlayerUrl}
+          fullPlayerSource={fullPlayerSource}
+        />
         {/* 第二行：播放器和选集 */}
         <div className='space-y-2'>
           {/* 折叠控制 - 仅在 lg 及以上屏幕显示 */}
@@ -1831,11 +1881,15 @@ function PlayPageClient() {
               <div className='relative w-full h-[300px] lg:h-full'>
                 <div
                   ref={artRef}
+                  hidden={activePlayer !== 'artplayer'}
                   className='bg-black w-full h-full rounded-xl overflow-hidden shadow-lg'
                 ></div>
+                {activePlayer === 'juliang' && (
+                  <JuliangPlayer key={externalPlayerUrl || videoUrl} url={externalPlayerUrl} title={videoTitle} />
+                )}
 
                 {/* 换源加载蒙层 */}
-                {isVideoLoading && (
+                {activePlayer === 'artplayer' && isVideoLoading && (
                   <div className='absolute inset-0 bg-black/85 backdrop-blur-sm rounded-xl flex items-center justify-center z-[500] transition-all duration-300'>
                     <div className='text-center max-w-md mx-auto px-6'>
                       {/* 动画影院图标 */}
