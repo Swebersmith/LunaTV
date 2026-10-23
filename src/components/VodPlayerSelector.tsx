@@ -34,7 +34,7 @@ export function VodPlayerSelector({
         >
           {(
             [
-              ['artplayer', '内置播放器'],
+              ['artplayer', 'Crayon Player'],
               ['juliang', '巨量播放器'],
             ] as [VodPlayer, string][]
           ).map(([player, label]) => (
@@ -120,12 +120,12 @@ export function VodPlayerSelector({
             系统视频全屏不显示画面遮挡，可用「独立打开」保留网页播放器的遮挡功能。
           </p>
           <p>
-            巨量自行管理进度、广告规则与连播，进度不会同步到本站；本站片头片尾配置仅用于内置播放器。开启智能匹配后，巨量可能切换到其他线路或集数。
+            巨量自行管理进度、广告规则与连播，进度不会同步到本站；本站片头片尾配置仅用于 Crayon Player。开启智能匹配后，巨量可能切换到其他线路或集数。
           </p>
         </details>
       ) : (
         <p className='text-xs text-gray-500 dark:text-gray-400'>
-          支持本站观看进度、自动连播与片头片尾设置；播放器选择会在此浏览器记住。
+          支持投屏、双击快进/快退、长按加速、滑动调节音量和画面亮度；保留观看进度、自动连播与片头片尾设置。
         </p>
       )}
     </div>
@@ -176,7 +176,7 @@ export function JuliangPlayer({
             ? '正在连接巨量播放器…'
             : status === 'loaded'
             ? '未出画面时，请点击播放器内的播放按钮，或切换备用入口。'
-            : '入口连接较慢或不可用，请切换备用入口、独立打开或使用内置播放器。'}
+            : '入口连接较慢或不可用，请切换备用入口、独立打开或使用 Crayon Player。'}
         </p>
       )}
     </div>

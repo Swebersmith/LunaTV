@@ -31,7 +31,12 @@ class MockArt {
     this.events[event]?.forEach((callback) => callback());
   }
   constructor(
-    public options?: { settings?: { name?: string; onClick?: () => void }[] }
+    public options?: {
+      settings?: { name?: string; onClick?: () => void }[];
+      gesture?: boolean;
+      fastForward?: boolean;
+      plugins?: unknown[];
+    }
   ) {
     mockArtInstances.push(this);
   }
@@ -115,6 +120,17 @@ function frame() {
   return screen.getByTitle('巨量播放器 · PlayerDemo');
 }
 
+it('embeds Crayon Player with enhanced touch/casting and keeps the saved built-in preference', async () => {
+  await openPage();
+  expect(screen.getByRole('button', { name: 'Crayon Player' })).toHaveAttribute('aria-pressed', 'true');
+  expect(mockArtInstances[0].options).toEqual(expect.objectContaining({
+    gesture: false,
+    fastForward: false,
+    plugins: [expect.any(Function)],
+    settings: expect.arrayContaining([expect.objectContaining({ name: 'blockAds' })]),
+  }));
+});
+
 it('releases HLS and pending auto-next when switching, then restores only the built-in position', async () => {
   await openPage();
   const native = mockArtInstances[0];
@@ -146,7 +162,7 @@ it('releases HLS and pending auto-next when switching, then restores only the bu
   expect(
     new URL(frame().getAttribute('src') || '').searchParams.get('url')
   ).toBe(firstUrl);
-  fireEvent.click(screen.getByRole('button', { name: '内置播放器' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Crayon Player' }));
   expect(screen.queryByTitle('巨量播放器 · PlayerDemo')).toBeNull();
   const restored = mockArtInstances[1];
   act(() => restored.emit('video:canplay'));
@@ -190,7 +206,7 @@ it('remembers selection, changes backup/matching independently, and replaces the
     entry: 'backup2',
     smartMatch: true,
   });
-  fireEvent.click(screen.getByRole('button', { name: '内置播放器' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Crayon Player' }));
   act(() => mockArtInstances[0].emit('video:canplay'));
   expect(mockArtInstances[0].currentTime).toBe(0);
 });
@@ -200,7 +216,7 @@ it('opens complete jlplayer pages directly and prevents sending HTML pages to HL
   await openPage();
   expect(frame()).toHaveAttribute('src', firstUrl);
   expect(mockArtInstances).toHaveLength(0);
-  expect(screen.getByRole('button', { name: '内置播放器' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Crayon Player' })).toBeDisabled();
 });
 
 it('keeps fallback controls usable when an entry is slow and does not claim video readiness from iframe load', async () => {

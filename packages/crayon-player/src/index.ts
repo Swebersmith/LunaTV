@@ -1,0 +1,177 @@
+import Artplayer from 'artplayer';
+import Hls from 'hls.js';
+
+import { createCrayonPlayerCore } from './core';
+import { EnhancementOptions } from './plugin';
+import { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from './vod-playback';
+
+export { attachGestures } from './gestures';
+export type { GestureOptions } from './gestures';
+export { attachCasting, prepareCastSdk } from './casting';
+export type { CastOptions } from './casting';
+export { crayonPlayerPlugin } from './plugin';
+export { createCrayonPlayerCore } from './core';
+export type { CrayonPlayerCoreOptions } from './core';
+export type { EnhancementOptions } from './plugin';
+export { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from './vod-playback';
+export { filterAdsFromM3U8, vodAdLoader } from './vod-ad-filter';
+export { filterVodAdSegments } from './vod-segment-filter';
+export type { VodAdFilterResult, VodAdRange } from './vod-segment-filter';
+
+type ArtOptions = ConstructorParameters<typeof Artplayer>[0];
+export interface CrayonPlayerOptions {
+  container: string | HTMLDivElement;
+  url: string;
+  title?: string;
+  poster?: string;
+  autoplay?: boolean;
+  blockAds?: boolean;
+  /** Scope this key to a film/episode, not to the whole site. */
+  storageKey?: string;
+  skip?: { enabled?: boolean; intro?: number; outro?: number };
+  onNext?: () => void;
+  onProgress?: (sourceTime: number, sourceDuration: number) => void;
+  enhancements?: EnhancementOptions;
+  artplayer?: Partial<ArtOptions>;
+}
+
+/** Standalone VOD player. Host applications can also install just crayonPlayerPlugin. */
+export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
+  let art: Artplayer;
+  let destroyed = false;
+  let blocked = options.blockAds !== false;
+  let resume: number | undefined;
+  let lastSave = 0;
+  let advanced = false;
+  let wake: { release(): Promise<void> } | undefined;
+  let wakePending = false;
+  let recoveryCount = 0;
+  const skip = { enabled: false, intro: 0, outro: 0, ...options.skip };
+  try {
+    const saved = options.storageKey && localStorage.getItem(options.storageKey);
+    if (saved) {
+      const record = JSON.parse(saved);
+      if (record.url === options.url && Number.isFinite(record.time) && record.time >= 0) resume = record.time;
+    }
+  } catch { /* Storage is optional in private browsing. */ }
+  const sourceUrl = () => art?.option.url || options.url;
+  const hlsType = (video: HTMLVideoElement, url: string) => {
+    // Keep an original source for Safari/AirPlay alongside HLS.js's MediaSource URL.
+    video.querySelectorAll('source').forEach(source => source.remove());
+    const source = document.createElement('source');
+    source.src = url;
+    source.type = 'application/vnd.apple.mpegurl';
+    video.appendChild(source);
+    const hls = attachVodHls(video, url, () => {
+      queueMicrotask(() => { if (!destroyed) art.notice.show = '此浏览器不支持 HLS 播放'; });
+    }, blocked,
+      result => {
+        const seconds = result.removed.reduce((sum, range) => sum + range.end - range.start, 0);
+        art.setting.update({ name: 'blockAds', tooltip: seconds ? `已过滤 ${seconds.toFixed(1)} 秒` : '已开启 · 未命中或暂不支持' });
+      });
+    hls?.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal || destroyed) return;
+      if (++recoveryCount > 3) { hls.destroy(); art.notice.show = '视频加载失败，请检查片源后重试'; return; }
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+      else { hls.destroy(); art.notice.show = '视频加载失败，请更换片源'; }
+    });
+    hls?.on(Hls.Events.FRAG_LOADED, () => { recoveryCount = 0; });
+  };
+  const next = () => {
+    if (advanced) return;
+    advanced = true;
+    if (options.onNext) options.onNext();
+    else art.pause();
+  };
+  art = createCrayonPlayerCore({
+    container: options.container, url: options.url,
+    poster: options.poster || '', autoplay: options.autoplay ?? false, volume: 0.7,
+    pip: true, setting: true, playbackRate: true, fullscreen: true,
+    fullscreenWeb: true, airplay: true, playsInline: true, lock: true,
+    autoOrientation: true, theme: '#22c55e', lang: 'zh-cn',
+    ...options.artplayer,
+    customType: { m3u8: hlsType, ...options.artplayer?.customType },
+    settings: [
+      { name: 'blockAds', html: '去广告', tooltip: blocked ? '已开启' : '已关闭', onClick() {
+        if (!Hls.isSupported()) return '原生播放模式不支持分片过滤';
+        resume = vodSourceTime(art.video);
+        blocked = !blocked;
+        recoveryCount = 0;
+        hlsType(art.video, sourceUrl());
+        return blocked ? '已开启' : '已关闭';
+      } },
+      { html: '跳过片头片尾', switch: skip.enabled, onSwitch: item => (skip.enabled = !item.switch) },
+      { html: '设置片头', onClick() { skip.intro = vodSourceTime(art.video); return `${Math.floor(skip.intro)} 秒`; } },
+      { html: '设置片尾', onClick() { skip.outro = Math.max(0, vodSourceDuration(art.video) - vodSourceTime(art.video)); return `${Math.floor(skip.outro)} 秒`; } },
+      { html: '删除跳过配置', onClick() { skip.enabled = false; skip.intro = 0; skip.outro = 0; return '已清除'; } },
+      ...(options.artplayer?.settings || []),
+    ],
+    controls: [
+      ...(options.onNext ? [{ name: 'nextEpisode', html: '下一集', position: 'left' as const, index: 13, click: next }] : []),
+      ...(options.artplayer?.controls || []),
+    ],
+  }, {
+    ...options.enhancements,
+    casting: options.enhancements?.casting === false ? false : {
+      getSource: () => ({ url: sourceUrl(), title: art.title, currentTime: vodSourceTime(art.video) }),
+      ...options.enhancements?.casting,
+    },
+  });
+  function save() {
+    if (destroyed || !Number.isFinite(art.currentTime)) return;
+    const time = vodSourceTime(art.video);
+    const duration = vodSourceDuration(art.video);
+    try { if (options.storageKey) localStorage.setItem(options.storageKey, JSON.stringify({ url: sourceUrl(), time })); } catch { /* optional */ }
+    options.onProgress?.(time, duration);
+  }
+  async function releaseWake() {
+    const lock = wake;
+    wake = undefined;
+    try { await lock?.release(); } catch { /* already released */ }
+  }
+  async function acquireWake() {
+    if (wake || wakePending || destroyed || !art.playing || document.hidden) return;
+    const navigatorWithWake = navigator as Navigator & { wakeLock?: { request(type: string): Promise<{ release(): Promise<void>; addEventListener(type: string, callback: () => void): void }> } };
+    if (!navigatorWithWake.wakeLock) return;
+    wakePending = true;
+    try {
+      const lock = await navigatorWithWake.wakeLock.request('screen');
+      if (destroyed || !art.playing || document.hidden) { await lock.release(); return; }
+      wake = lock;
+      lock.addEventListener('release', () => { if (wake === lock) wake = undefined; });
+    } catch { /* Permission or platform may deny screen wake lock. */ }
+    finally { wakePending = false; }
+  }
+  const visibility = () => { if (document.hidden) { save(); void releaseWake(); } else void acquireWake(); };
+  art.on('video:canplay', () => {
+    if (resume !== undefined) {
+      art.currentTime = Math.min(vodFilteredTime(art.video, resume), Math.max(0, art.duration - 1));
+      resume = undefined;
+    }
+  });
+  art.on('video:timeupdate', () => {
+    if (Date.now() - lastSave > 5000) { save(); lastSave = Date.now(); }
+    if (!skip.enabled) return;
+    const time = vodSourceTime(art.video);
+    const duration = vodSourceDuration(art.video);
+    if (skip.intro > 0 && time < skip.intro && skip.intro < duration) art.seek = vodFilteredTime(art.video, skip.intro);
+    if (skip.outro > 0 && duration > 0 && time >= duration - skip.outro) next();
+  });
+  art.on('video:ended', () => { save(); void releaseWake(); next(); });
+  art.on('play', () => { void acquireWake(); });
+  art.on('pause', () => { save(); void releaseWake(); });
+  document.addEventListener('visibilitychange', visibility);
+  window.addEventListener('pagehide', save);
+  art.on('destroy', () => {
+    save();
+    destroyed = true;
+    void releaseWake();
+    art.video.hls?.destroy();
+    delete art.video.hls;
+    document.removeEventListener('visibilitychange', visibility);
+    window.removeEventListener('pagehide', save);
+  });
+  art.title = options.title || '';
+  return art;
+}

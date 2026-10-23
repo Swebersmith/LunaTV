@@ -8,6 +8,7 @@ import { Heart } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useRef, useState } from 'react';
 
+import { createCrayonPlayerCore } from '@/lib/crayon-player';
 import {
   deleteFavorite,
   deletePlayRecord,
@@ -1290,12 +1291,7 @@ function PlayPageClient() {
     }
 
     try {
-      // 创建新的播放器实例
-      Artplayer.PLAYBACK_RATE = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
-      Artplayer.USE_RAF = false;
-      Artplayer.FULLSCREEN_WEB_IN_BODY = true;
-
-      artPlayerRef.current = new Artplayer({
+      artPlayerRef.current = createCrayonPlayerCore({
         container: artRef.current,
         url: videoUrl,
         poster: videoCover,
@@ -1323,7 +1319,6 @@ function PlayPageClient() {
         theme: '#22c55e',
         lang: 'zh-cn',
         hotkey: false,
-        fastForward: true,
         autoOrientation: true,
         lock: true,
         moreVideoAttr: {
@@ -1480,6 +1475,14 @@ function PlayPageClient() {
             },
           },
         ],
+      }, {
+        casting: {
+          getSource: () => ({
+            url: artPlayerRef.current?.option.url || videoUrl,
+            title: `${videoTitleRef.current} - 第${currentEpisodeIndexRef.current + 1}集`,
+            currentTime: sourceTime(),
+          }),
+        },
       });
 
       // 监听播放器事件
