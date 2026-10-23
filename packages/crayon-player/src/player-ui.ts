@@ -48,7 +48,7 @@ export function attachPlayerUi(art: Artplayer, showGestures = true) {
     row.appendChild(cell);
   });
   const foot = document.createElement('div');
-  foot.textContent = '长按加速 · 右侧上下滑动调节音量';
+  foot.textContent = '左右滑动或拖动进度条调节进度 · 长按加速 · 右侧上下滑调节音量';
   foot.style.cssText = 'position:absolute;bottom:18%;width:100%;font-size:11px';
   guide.append(row, foot);
   root.appendChild(guide);
@@ -71,7 +71,7 @@ export function attachPlayerUi(art: Artplayer, showGestures = true) {
   const setting = (visible: boolean) => { if (visible) { activity(); art.controls.show = true; } };
   const autoHide = () => {
     // ArtPlayer normally pins the controls while settings are open. Share one hide cycle.
-    if (art.playing && art.setting.show && Date.now() - lastActivity >= 3000) {
+    if (art.playing && art.setting.show && !root.dataset.crayonScrubbing && Date.now() - lastActivity >= 3000) {
       art.setting.show = false;
       art.controls.show = false;
     }

@@ -1,5 +1,7 @@
 import type Artplayer from 'artplayer';
 
+import { seekAndSync, setScrubbing } from './progress';
+
 export interface GestureOptions {
   seekSeconds?: number;
   holdRate?: number;
@@ -44,12 +46,13 @@ export function attachGestures(art: Artplayer, options: GestureOptions = {}) {
   };
   const cancel = () => {
     restoreRate();
+    if (active?.direction === 'horizontal') setScrubbing(art, false);
     active = undefined;
     clearTap();
   };
   const seek = (time: number) => {
     if (art.option.isLive || !Number.isFinite(art.duration) || art.duration <= 0) return;
-    art.seek = clamp(time, 0, art.duration);
+    seekAndSync(art, time);
   };
   const start = (event: TouchEvent) => {
     if (!picture(event.target) || art.isLock) return;
@@ -80,6 +83,7 @@ export function attachGestures(art: Artplayer, options: GestureOptions = {}) {
   };
   function cancelActive() {
     restoreRate();
+    if (active?.direction === 'horizontal') setScrubbing(art, false);
     active = undefined;
   }
   const move = (event: TouchEvent) => {
@@ -95,13 +99,13 @@ export function attachGestures(art: Artplayer, options: GestureOptions = {}) {
     if (!active.direction && Math.max(Math.abs(dx), Math.abs(dy)) < 12) return;
     if (!active.direction) {
       active.direction = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
+      if (active.direction === 'horizontal' && !art.option.isLive) setScrubbing(art, true);
       restoreRate();
       clearTap();
     }
     if (active.direction === 'horizontal') {
       const width = (art.isRotate ? rect.height : rect.width) || 1;
       seek(active.time + dx / width * Math.min(art.duration || 0, 300));
-      if (!art.option.isLive) art.notice.show = `进度 ${Math.floor(art.currentTime)} 秒`;
     } else {
       const height = (art.isRotate ? rect.width : rect.height) || 1;
       const delta = -dy / (height * 0.8);
@@ -123,6 +127,7 @@ export function attachGestures(art: Artplayer, options: GestureOptions = {}) {
     const ended = active;
     restoreRate();
     active = undefined;
+    if (ended.direction === 'horizontal') setScrubbing(art, false);
     if (ended.direction || ended.held || art.isLock) { clearTap(); return; }
     const now = Date.now();
     if (lastTap && now - lastTap.time < 300 && lastTap.zone === ended.zone &&
