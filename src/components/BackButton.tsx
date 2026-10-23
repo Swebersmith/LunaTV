@@ -3,6 +3,8 @@
 import { ArrowLeft } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
+import { navigateWithFallback } from './NavigationLink';
+
 export function BackButton() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -10,11 +12,11 @@ export function BackButton() {
 
   const handleBack = () => {
     if (returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')) {
-      router.push(returnTo);
+      navigateWithFallback(returnTo, (href) => router.push(href));
       return;
     }
 
-    router.push('/');
+    navigateWithFallback('/', (href) => router.push(href));
   };
 
   return (

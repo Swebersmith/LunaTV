@@ -2,7 +2,7 @@
 'use client';
 
 import { ChevronUp, Search, X } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import React, { Suspense, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
 import {
@@ -16,6 +16,7 @@ import { SearchResult } from '@/lib/types';
 import { useVideoSearch } from '@/hooks/useVideoSearch';
 
 import { SquadColors } from '@/components/CrayonTheme';
+import { navigateWithFallback } from '@/components/NavigationLink';
 import PageLayout from '@/components/PageLayout';
 import SearchResultFilter, { SearchFilterCategory } from '@/components/SearchResultFilter';
 import SearchSuggestions from '@/components/SearchSuggestions';
@@ -28,7 +29,6 @@ function SearchPageClient() {
   // 返回顶部按钮显示状态
   const [showBackToTop, setShowBackToTop] = useState(false);
 
-  const router = useRouter();
   const searchParams = useSearchParams();
   const query = (searchParams.get('q') || '').trim().replace(/\s+/g, ' ');
   const [attempt, setAttempt] = useState(0);
@@ -399,8 +399,15 @@ function SearchPageClient() {
     setShowSuggestions(false);
     setFilterAll({ source: 'all', title: 'all', year: 'all', yearOrder: 'none' });
     setFilterAgg({ source: 'all', title: 'all', year: 'all', yearOrder: 'none' });
-    if (trimmed === query) setAttempt(previous => previous + 1);
-    else startNavigation(() => router.push(`/search?q=${encodeURIComponent(trimmed)}`));
+    startNavigation(() => navigateWithFallback(`/search?q=${encodeURIComponent(trimmed)}`, (href) => {
+      // Search data is fetched on the client. Keep URL/back navigation in sync
+      // without waiting for a new server-component request for every keyword.
+      if (trimmed === query) {
+        window.history.replaceState(null, '', href);
+        setAttempt(previous => previous + 1);
+      }
+      else window.history.pushState(null, '', href);
+    }));
   };
 
   const handleSearch = (event: React.FormEvent<HTMLFormElement>) => {

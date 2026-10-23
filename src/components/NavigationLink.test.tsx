@@ -1,7 +1,10 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { AnchorHTMLAttributes } from 'react';
 
-import NavigationLink, { NavigationProgress } from './NavigationLink';
+import NavigationLink, {
+  navigateWithFallback,
+  NavigationProgress,
+} from './NavigationLink';
 
 const mockPush = jest.fn();
 let mockPath = '/douban';
@@ -138,4 +141,81 @@ it('cancels an outstanding recovery when the user chooses the current page', () 
   expect(jest.getTimerCount()).toBe(0);
   expect(screen.queryByRole('status')).toBeNull();
   expect(mockPush).toHaveBeenLastCalledWith('/');
+});
+
+it('clears a search query through client history and cancels an older pending navigation', () => {
+  mockPath = '/search';
+  window.history.replaceState(null, '', '/search?q=old');
+  const history = jest.spyOn(window.history, 'pushState');
+  render(
+    <>
+      <NavigationLink href='/play?title=old'>播放</NavigationLink>
+      <NavigationLink href='/search'>搜索</NavigationLink>
+      <NavigationProgress />
+    </>
+  );
+  fireEvent.click(screen.getByRole('link', { name: '播放' }));
+  fireEvent.click(screen.getByRole('link', { name: '搜索' }));
+  expect(history).toHaveBeenCalledWith(null, '', '/search');
+  expect(mockPush).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(jest.getTimerCount()).toBe(0);
+});
+
+it('uses a full navigation when the latest route stays stalled and cancels superseded recovery timers', () => {
+  const originalLocation = window.location;
+  const assign = jest.fn();
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: { pathname: '/douban', search: '?type=movie', assign },
+  });
+  try {
+    render(
+      <>
+        <NavigationLink href='/'>首页</NavigationLink>
+        <NavigationLink href='/search'>搜索</NavigationLink>
+        <NavigationProgress />
+      </>
+    );
+    fireEvent.click(screen.getByRole('link', { name: '首页' }));
+    act(() => jest.advanceTimersByTime(3000));
+    fireEvent.click(screen.getByRole('link', { name: '搜索' }));
+    act(() => jest.advanceTimersByTime(5000));
+    expect(assign).not.toHaveBeenCalled();
+    act(() => jest.advanceTimersByTime(3000));
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith('/search');
+    expect(screen.queryByRole('status')).toBeNull();
+    act(() =>
+      navigateWithFallback('/', () => {
+        throw new Error('router unavailable');
+      })
+    );
+    expect(assign).toHaveBeenLastCalledWith('/');
+    expect(jest.getTimerCount()).toBe(0);
+  } finally {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: originalLocation,
+    });
+  }
+});
+
+it('discards an in-flight route when the current search entry is selected again', () => {
+  mockPath = '/search';
+  window.history.replaceState(null, '', '/search');
+  const replace = jest.spyOn(window.history, 'replaceState');
+  render(
+    <>
+      <NavigationLink href='/'>首页</NavigationLink>
+      <NavigationLink href='/search'>搜索</NavigationLink>
+      <NavigationProgress />
+    </>
+  );
+  fireEvent.click(screen.getByRole('link', { name: '首页' }));
+  fireEvent.click(screen.getByRole('link', { name: '搜索' }));
+  expect(replace).toHaveBeenCalledWith(null, '', '/search');
+  expect(mockPush).toHaveBeenCalledTimes(1);
+  expect(jest.getTimerCount()).toBe(0);
+  expect(screen.queryByRole('status')).toBeNull();
 });

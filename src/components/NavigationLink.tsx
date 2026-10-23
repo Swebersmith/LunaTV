@@ -73,6 +73,10 @@ export default function NavigationLink({
 }: Props) {
   const pathname = usePathname();
   const params = useSearchParams();
+  const isClientQueryNavigation =
+    (pathname === '/douban' && href.startsWith('/douban?')) ||
+    (pathname === '/search' &&
+      (href === '/search' || href.startsWith('/search?')));
   const pendingHref = useSyncExternalStore(subscribe, snapshot, serverSnapshot);
   useEffect(() => {
     const current = window.location.pathname + window.location.search;
@@ -83,11 +87,7 @@ export default function NavigationLink({
   return (
     <Link
       {...props}
-      prefetch={
-        pathname === '/douban' && href.startsWith('/douban?')
-          ? false
-          : props.prefetch
-      }
+      prefetch={isClientQueryNavigation ? false : props.prefetch}
       href={href}
       aria-busy={pendingHref === href || undefined}
       onClick={(event) => {
@@ -103,12 +103,19 @@ export default function NavigationLink({
           props.download
         )
           return;
-        if (pathname === '/douban' && href.startsWith('/douban?')) {
+        if (isClientQueryNavigation) {
+          const wasNavigating = Boolean(pending);
           cancelNavigation();
           event.preventDefault();
           if (window.location.pathname + window.location.search !== href)
             window.history.pushState(null, '', href);
-          else window.dispatchEvent(new Event('category-reselect'));
+          else {
+            // Next's patched history API also discards an in-flight navigation.
+            // Re-selecting this page must not let an older request take over later.
+            if (wasNavigating) window.history.replaceState(null, '', href);
+            if (pathname === '/douban')
+              window.dispatchEvent(new Event('category-reselect'));
+          }
           if (props.scroll !== false) window.scrollTo(0, 0);
           return;
         }

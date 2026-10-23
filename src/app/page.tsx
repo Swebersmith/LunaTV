@@ -3,7 +3,6 @@
 'use client';
 
 import { ChevronRight } from 'lucide-react';
-import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
 
 import {
@@ -213,7 +212,7 @@ function HomeClient() {
                   <div className='crayon-empty col-span-full text-center text-gray-500 py-8 dark:text-gray-400'>
                     <span className='crayon-empty-star' aria-hidden='true'>☆</span>
                     <p>收藏夹还空着，先去发现一部喜欢的好片吧。</p>
-                    <Link href='/search' className='crayon-secondary-link mt-4 inline-flex'>去找好片 <ChevronRight size={16} /></Link>
+                    <NavigationLink href='/search' className='crayon-secondary-link mt-4 inline-flex'>去找好片 <ChevronRight size={16} /></NavigationLink>
                   </div>
                 )}
               </div>

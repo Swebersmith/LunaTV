@@ -56,16 +56,9 @@ export default function SearchSuggestions({
         if (!controller.signal.aborted && abortControllerRef.current === controller) setSuggestions(apiSuggestions);
       }
     } catch (err: unknown) {
-      // 类型保护判断 err 是否是 Error 类型
-      if (err instanceof Error) {
-        if (err.name !== 'AbortError') {
-          // 不是取消请求导致的错误才清空
-          setSuggestions([]);
-        }
-      } else {
-        // 如果 err 不是 Error 类型，也清空提示
-        setSuggestions([]);
-      }
+      // A late rejection from a cancelled query must not erase newer suggestions.
+      if (!controller.signal.aborted && abortControllerRef.current === controller &&
+        !(err instanceof Error && err.name === 'AbortError')) setSuggestions([]);
     }
   }, []);
 
@@ -131,6 +124,7 @@ export default function SearchSuggestions({
     >
       {suggestions.map((suggestion) => (
         <button
+          type='button'
           key={`related-${suggestion.text}`}
           onClick={() => onSelect(suggestion.text)}
           className="w-full px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150 flex items-center gap-3"

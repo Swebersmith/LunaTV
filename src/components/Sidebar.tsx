@@ -3,8 +3,7 @@
 'use client';
 
 import { Cat, Clover, Film, Home, Menu, Radio, Search, Star, Tv } from 'lucide-react';
-import Link from 'next/link';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import {
   createContext,
   useCallback,
@@ -32,7 +31,7 @@ export const useSidebar = () => useContext(SidebarContext);
 const Logo = () => {
   const { siteName } = useSite();
   return (
-    <Link
+    <NavigationLink
       href='/'
       className='flex h-16 items-center justify-center gap-2 select-none hover:opacity-80 transition-opacity duration-200'
     >
@@ -40,7 +39,7 @@ const Logo = () => {
       <span className='whitespace-nowrap crayon-wordmark text-xl font-black tracking-tight text-red-600 dark:text-amber-300'>
         {siteName}
       </span>
-    </Link>
+    </NavigationLink>
   );
 };
 
@@ -57,7 +56,6 @@ declare global {
 }
 
 const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   // 若同一次 SPA 会话中已经读取过折叠状态，则直接复用，避免闪烁
@@ -116,10 +114,6 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
     }
     onToggle?.(newState);
   }, [isCollapsed, onToggle]);
-
-  const handleSearchClick = useCallback(() => {
-    router.push('/search');
-  }, [router]);
 
   const contextValue = {
     isCollapsed,
@@ -214,9 +208,8 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
 
             {/* 首页和搜索导航 */}
             <nav className='px-2 mt-4 space-y-1'>
-              <Link
+              <NavigationLink
                 href='/'
-                onClick={() => setActive('/')}
                 data-active={active === '/'}
                 className={`group flex items-center rounded-lg px-2 py-2 pl-4 text-gray-700 hover:bg-gray-100/30 hover:text-red-600 data-[active=true]:bg-red-500/20 data-[active=true]:text-red-700 font-medium transition-colors duration-200 min-h-[40px] dark:text-gray-300 dark:hover:text-red-400 dark:data-[active=true]:bg-red-500/10 dark:data-[active=true]:text-red-400 ${isCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
                   } gap-3 justify-start`}
@@ -229,14 +222,9 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                     首页
                   </span>
                 )}
-              </Link>
-              <Link
+              </NavigationLink>
+              <NavigationLink
                 href='/search'
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleSearchClick();
-                  setActive('/search');
-                }}
                 data-active={active === '/search'}
                 className={`group flex items-center rounded-lg px-2 py-2 pl-4 text-gray-700 hover:bg-gray-100/30 hover:text-red-600 data-[active=true]:bg-red-500/20 data-[active=true]:text-red-700 font-medium transition-colors duration-200 min-h-[40px] dark:text-gray-300 dark:hover:text-red-400 dark:data-[active=true]:bg-red-500/10 dark:data-[active=true]:text-red-400 ${isCollapsed ? 'w-full max-w-none mx-0' : 'mx-0'
                   } gap-3 justify-start`}
@@ -249,7 +237,7 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                     搜索
                   </span>
                 )}
-              </Link>
+              </NavigationLink>
             </nav>
 
             {!isCollapsed && <div className='crayon-nav-caption'><SquadColors /> 快乐探索小分队</div>}

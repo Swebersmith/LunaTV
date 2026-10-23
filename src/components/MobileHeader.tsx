@@ -1,9 +1,8 @@
 'use client';
 
-import Link from 'next/link';
-
 import { BackButton } from './BackButton';
 import { BrandLogo } from './BrandLogo';
+import NavigationLink from './NavigationLink';
 import { useSite } from './SiteProvider';
 import { ThemeToggle } from './ThemeToggle';
 import { UserMenu } from './UserMenu';
@@ -19,7 +18,7 @@ const MobileHeader = ({ showBackButton = false }: MobileHeaderProps) => {
       <div className='crayon-mobile-header-layout'>
         {/* 左侧：搜索按钮、返回按钮和设置按钮 */}
         <div className='flex items-center gap-1'>
-          <Link
+          <NavigationLink
             href='/search'
             aria-label='搜索影片'
             className='w-10 h-10 p-2 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200/50 dark:text-gray-300 dark:hover:bg-gray-700/50 transition-colors'
@@ -38,11 +37,11 @@ const MobileHeader = ({ showBackButton = false }: MobileHeaderProps) => {
                 d='M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z'
               />
             </svg>
-          </Link>
+          </NavigationLink>
           {showBackButton && <BackButton />}
         </div>
 
-        <Link
+        <NavigationLink
           href='/'
           aria-label={siteName}
           title={siteName}
@@ -50,7 +49,7 @@ const MobileHeader = ({ showBackButton = false }: MobileHeaderProps) => {
         >
           <BrandLogo size={24} />
           <span className='min-w-0 truncate'>{siteName}</span>
-        </Link>
+        </NavigationLink>
 
         {/* 右侧按钮 */}
         <div className='flex items-center justify-end gap-1'>
