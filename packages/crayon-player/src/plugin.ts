@@ -12,7 +12,7 @@ export interface EnhancementOptions {
 /** ArtPlayer plugin; install with fastForward:false and gesture:false to avoid duplicate gestures. */
 export function crayonPlayerPlugin(options: EnhancementOptions = {}) {
   return (art: Artplayer) => {
-    const disposeUi = attachPlayerUi(art);
+    const disposeUi = attachPlayerUi(art,options.gestures !== false);
     const disposeGestures = options.gestures === false ? undefined : attachGestures(art, options.gestures);
     const disposeCast = options.casting ? attachCasting(art, options.casting) : undefined;
     let disposed = false;

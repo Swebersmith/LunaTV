@@ -11,7 +11,8 @@ export function volumeSetting(): Setting {
         const item = this.setting.find('crayonVolumeRange');
         item.range = [Math.round(this.volume * 100), 0, 100, 1];
         item.$range.setAttribute('aria-label', '播放音量');
-        item.$range.style.width = '140px';
+        item.$range.style.width = '100px';
+        item.$range.style.height = '24px';
       },
       onChange(item) {
         const target = (item.range[0] || 0) / 100;
@@ -27,8 +28,10 @@ export function volumeSetting(): Setting {
   };
 }
 
-export function attachPlayerUi(art: Artplayer) {
+export function attachPlayerUi(art: Artplayer, showGestures = true) {
   const root = art.template.$player;
+  const oldMaxHeight = root.style.getPropertyValue('--art-settings-max-height');
+  root.style.setProperty('--art-settings-max-height', 'min(300px, calc(100% - 56px))');
   let lastActivity = Date.now();
   let guideTimer: ReturnType<typeof setTimeout> | undefined;
   const guide = document.createElement('div');
@@ -51,6 +54,7 @@ export function attachPlayerUi(art: Artplayer) {
   root.appendChild(guide);
   const dismissGuide = () => { guide.hidden = true; clearTimeout(guideTimer); };
   const showGuide = () => {
+    if (!showGestures) return;
     if (!(navigator.maxTouchPoints > 0 || 'ontouchstart' in window)) return;
     try {
       if (sessionStorage.getItem('crayon-player-gesture-guide-v2')) return;
@@ -89,6 +93,8 @@ export function attachPlayerUi(art: Artplayer) {
   art.on('video:volumechange', syncVolume);
   return () => {
     dismissGuide(); guide.remove();
+    if (oldMaxHeight) root.style.setProperty('--art-settings-max-height',oldMaxHeight);
+    else root.style.removeProperty('--art-settings-max-height');
     events.forEach(event => root.removeEventListener(event, activity, true));
     root.removeEventListener('touchstart', dismissGuide, true);
     art.off('play', showGuide);
