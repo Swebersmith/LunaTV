@@ -19,6 +19,9 @@ const headers = () => new Headers({
   'Content-Security-Policy': "sandbox; default-src 'none'",
 });
 const plainFilter = (): VodAdFilterResult => ({ playlist: '', originalDuration: 0, removed: [], reason: 'unsupported' });
+class RelayError extends Error {
+  constructor(readonly code: string, readonly upstreamStatus?: number) { super(code); }
+}
 const externalTracks = (text: string) => text.split(/\r?\n/).some(line =>
   line.startsWith('#EXT-X-MEDIA:') && /TYPE=(?:AUDIO|SUBTITLES)(?:,|$)/.test(line) && /URI=/.test(line)
 );
@@ -77,6 +80,7 @@ async function upstream(value: string, request: Request, resource = false) {
     }
     let response: Response;
     try { response = await fetch(target.href, { headers: requestHeaders, signal: controller.signal, redirect: 'manual', cache: 'no-store' }); }
+    catch { throw new RelayError(controller.signal.aborted ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_UNAVAILABLE'); }
     finally { clearTimeout(timer); request.signal.removeEventListener('abort',abort); }
     if ([301,302,303,307,308].includes(response.status)) {
       const location = response.headers.get('location');
@@ -84,7 +88,7 @@ async function upstream(value: string, request: Request, resource = false) {
       if (!location) throw new Error('Invalid redirect');
       target = publicUrl(location,target.href); continue;
     }
-    if (!response.ok) { await response.body?.cancel(); throw new Error('Media upstream unavailable'); }
+    if (!response.ok) { await response.body?.cancel(); throw new RelayError('UPSTREAM_UNAVAILABLE', response.status); }
     return { response, url: target.href };
   }
   throw new Error('Too many media redirects');
@@ -140,6 +144,7 @@ export async function handleMediaRelay(request: Request, options: MediaRelayOpti
     let authorized = false;
     try { authorized = (!origin || origin === incoming.origin) && await options.authorize(request); } catch { /* Authentication fails closed. */ }
     if (!authorized) return new Response('Unauthorized',{status:401,headers:h});
+    let readingUpstream = false;
     try {
       const body = await readMediaText(new Response(request.body),12000,10000);
       const input = JSON.parse(body);
@@ -148,21 +153,22 @@ export async function handleMediaRelay(request: Request, options: MediaRelayOpti
       let block = input.blockAds !== false;
       let filter = plainFilter();
       if (isHls) {
+        readingUpstream = true;
         let resolved = false;
         for (let depth=0;depth<5;depth++) {
           const current = await upstream(url,request);
           url = current.url;
           const text = await readMediaText(current.response);
-          if (!text.trimStart().startsWith('#EXTM3U')) throw new Error('Invalid HLS playlist');
+          if (!text.trimStart().startsWith('#EXTM3U')) throw new RelayError('INVALID_PLAYLIST');
           // External audio/subtitle renditions must retain a coordinated timeline.
           if (externalTracks(text)) { block = false; resolved = true; break; }
           if (text.includes('#EXT-X-STREAM-INF:')) {
             const child = text.split(/\r?\n/).map(line=>line.trim()).find(line=>line && !line.startsWith('#'));
-            if (!child) throw new Error('Empty HLS master');
+            if (!child) throw new RelayError('INVALID_PLAYLIST');
             url = publicUrl(child,url).href;
           } else { filter = block ? filterVodAdSegments(text,url) : plainFilter(); resolved = true; break; }
         }
-        if (!resolved) throw new Error('Nested HLS limit');
+        if (!resolved) throw new RelayError('INVALID_PLAYLIST');
       }
       const expiry = Math.floor(Date.now()/1000)+lifetime;
       const result = {
@@ -172,7 +178,14 @@ export async function handleMediaRelay(request: Request, options: MediaRelayOpti
       };
       h.set('Content-Type','application/json');
       return new Response(JSON.stringify(result),{headers:h});
-    } catch { return new Response('无法准备播放清单，请检查片源后重试',{status:502,headers:h}); }
+    } catch (error) {
+      const code = error instanceof RelayError ? error.code
+        : readingUpstream ? error instanceof Error && /timed out/.test(error.message) ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_UNAVAILABLE'
+        : 'INVALID_REQUEST';
+      h.set('Content-Type','application/json');
+      // Return categories/status only, never an upstream body, URL or exception.
+      return new Response(JSON.stringify({error:{code,...(error instanceof RelayError && error.upstreamStatus ? {upstreamStatus:error.upstreamStatus} : {})}}),{status:502,headers:h});
+    }
   }
   if (request.method === 'OPTIONS') return new Response(null,{status:204,headers:h});
   if (!['GET','HEAD'].includes(request.method)) return new Response(null,{status:405,headers:h});

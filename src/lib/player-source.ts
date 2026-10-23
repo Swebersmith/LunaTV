@@ -1,5 +1,6 @@
 import { sourceToFilteredTime } from './vod-segment-filter';
 import { createMediaPreparer } from '../../packages/crayon-player/src/media-client';
+export { mediaPreparationNotice } from '../../packages/crayon-player/src/media-client';
 
 export const preparePlayerSource = createMediaPreparer();
 

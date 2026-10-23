@@ -23,7 +23,7 @@ import {
   saveSkipConfig,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
-import { prepareCastSource, preparePlayerSource } from '@/lib/player-source';
+import { mediaPreparationNotice, prepareCastSource, preparePlayerSource } from '@/lib/player-source';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 import { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from '@/lib/vod-playback';
@@ -1348,13 +1348,13 @@ function PlayPageClient() {
                   name: 'blockAds',
                   tooltip: removedSeconds > 0
                     ? `已过滤 ${removedSeconds.toFixed(1)} 秒`
-                    : result.reason === 'unsupported' ? '已开启 · 当前片源暂不支持' : '已开启 · 未命中广告规则',
+                    : result.reason === 'unsupported' ? '已开启 · 当前格式暂不支持过滤' : '已开启 · 未识别出可过滤广告',
                 });
               },
               (url) => preparePlayerSource(url, true),
-              () => {
-                setIsVideoLoading(false);
-                if (artPlayerRef.current) artPlayerRef.current.notice.show = '去广告清单加载失败，请重试或关闭去广告后播放。';
+              (error, browserFallback) => {
+                if (!browserFallback) setIsVideoLoading(false);
+                if (artPlayerRef.current) artPlayerRef.current.notice.show = mediaPreparationNotice(error, browserFallback);
               }
             );
             ensureVideoSource(video, url);

@@ -2,7 +2,7 @@ import Artplayer from 'artplayer';
 import Hls from 'hls.js';
 
 import { createCrayonPlayerCore } from './core';
-import { createMediaPreparer, MediaPreparer } from './media-client';
+import { createMediaPreparer, mediaPreparationNotice,MediaPreparer } from './media-client';
 import { EnhancementOptions } from './plugin';
 import { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from './vod-playback';
 import { sourceToFilteredTime } from './vod-segment-filter';
@@ -15,7 +15,7 @@ export { createCrayonPlayerCore } from './core';
 export type { GestureOptions } from './gestures';
 export { attachGestures } from './gestures';
 export type { MediaPreparer, PreparedMedia } from './media-client';
-export { createMediaPreparer } from './media-client';
+export { createMediaPreparer, MediaPreparationError, mediaPreparationNotice } from './media-client';
 export type { EnhancementOptions } from './plugin';
 export { crayonPlayerPlugin } from './plugin';
 export { filterAdsFromM3U8, vodAdLoader } from './vod-ad-filter';
@@ -74,10 +74,10 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
     }, blocked,
       result => {
         const seconds = result.removed.reduce((sum, range) => sum + range.end - range.start, 0);
-        art.setting.update({ name: 'blockAds', tooltip: seconds ? `已过滤 ${seconds.toFixed(1)} 秒` : '已开启 · 未命中或暂不支持' });
+        art.setting.update({ name: 'blockAds', tooltip: seconds ? `已过滤 ${seconds.toFixed(1)} 秒` : result.reason === 'unsupported' ? '已开启 · 当前格式暂不支持过滤' : '已开启 · 未识别出可过滤广告' });
       },
       prepareMedia ? url => prepareMedia(url,blocked) : undefined,
-      () => { art.notice.show = '去广告清单加载失败，请重试或关闭去广告'; });
+      (error, fallback) => { art.notice.show = mediaPreparationNotice(error, fallback); });
     hls?.on(Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal || destroyed) return;
       if (++recoveryCount > 3) { hls.destroy(); art.notice.show = '视频加载失败，请检查片源后重试'; return; }

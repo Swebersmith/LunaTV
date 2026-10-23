@@ -1,5 +1,6 @@
 import Hls from 'hls.js';
 
+import { MediaPreparationError } from './media-client';
 import { vodAdLoader } from './vod-ad-filter';
 import {
   filteredToSourceTime,
@@ -25,7 +26,7 @@ export function attachVodHls(
   blockAds = true,
   onAdFilter?: (result: VodAdFilterResult) => void,
   prepareSource?: (url: string) => Promise<{ url: string; filter: VodAdFilterResult }>,
-  onPreparationError?: () => void
+  onPreparationError?: (error: unknown, browserFallback: boolean) => void
 ): Hls | null {
   video.hls?.destroy();
   delete video.hls;
@@ -49,7 +50,12 @@ export function attachVodHls(
     return null;
   }
   const preparedPlayback = blockAds && !!prepareSource;
-  const hls = useNative ? null : new Hls({
+  const browserLoader = () => vodAdLoader(Hls.DefaultConfig.loader, result => {
+    if (video.hls !== hls) return;
+    video.vodAdFilter = result;
+    onAdFilter?.(result);
+  });
+  const hls: Hls | null = useNative ? null : new Hls({
     debug: false,
     enableWorker: true,
     lowLatencyMode: false,
@@ -61,11 +67,7 @@ export function attachVodHls(
     maxBufferHole: 0.3,
     // Filter actual ad segment groups while preserving retained HLS state.
     loader: blockAds && !preparedPlayback
-      ? vodAdLoader(Hls.DefaultConfig.loader, (result) => {
-          if (video.hls !== hls) return;
-          video.vodAdFilter = result;
-          onAdFilter?.(result);
-        })
+      ? browserLoader()
       : Hls.DefaultConfig.loader,
   });
   if (hls) {
@@ -78,7 +80,7 @@ export function attachVodHls(
       }
     });
   }
-  const load = (playbackUrl: string, filter?: VodAdFilterResult) => {
+  const load = (playbackUrl: string, filter?: VodAdFilterResult, browserFallback = false) => {
     if (video.vodNativeRequest !== request || hls && video.hls !== hls) return;
     video.vodNativePending = false;
     video.vodPlaybackUrl = playbackUrl;
@@ -87,7 +89,7 @@ export function attachVodHls(
       hls.loadSource(playbackUrl);
       hls.attachMedia(video);
       // A raw fallback would bypass client-side filtering in standalone mode.
-      if (preparedPlayback || !blockAds) setHlsAlternative(video, playbackUrl);
+      if (!browserFallback && (preparedPlayback || !blockAds)) setHlsAlternative(video, playbackUrl);
     } else {
       setHlsAlternative(video, playbackUrl);
       video.src = playbackUrl;
@@ -96,15 +98,22 @@ export function attachVodHls(
   };
   if (preparedPlayback && prepareSource) {
     video.vodNativePending = true;
-    const failed = () => {
+    const failed = (error: unknown) => {
       if (video.vodNativeRequest !== request) return;
       video.vodNativePending = false;
-      // Do not silently recover using the unfiltered original.
-      onPreparationError?.();
+      // MSE can still filter the actual playlist in-browser when the relay
+      // cannot reach this provider. Never add a raw native/AirPlay alternative.
+      const fallback = !!hls && (!(error instanceof MediaPreparationError) || error.browserFallback);
+      if (fallback && hls) {
+        hls.config.loader = browserLoader();
+        load(url, undefined, true);
+      }
+      // Native playback and TVs still require a prepared HTTP playlist.
+      onPreparationError?.(error, fallback);
     };
     try {
       void prepareSource(url).then(prepared => load(prepared.url, prepared.filter)).catch(failed);
-    } catch { failed(); }
+    } catch (error) { failed(error); }
   } else load(url);
   return hls;
 }
