@@ -81,9 +81,9 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
         art.setting.update({ name: 'blockAds', tooltip: seconds ? `已过滤 ${seconds.toFixed(1)} 秒` : result.reason === 'unsupported' ? '已开启 · 当前格式暂不支持过滤' : '已开启 · 未识别出可过滤广告' });
       },
       prepareMedia ? url => prepareMedia(url,blocked) : undefined,
-      (error, fallback) => {
-        if (!fallback) art.loading.show = false;
-        art.notice.show = mediaPreparationNotice(error, fallback);
+      (error) => {
+        art.loading.show = false;
+        art.notice.show = mediaPreparationNotice(error);
       });
     if (hls) attachVodRecovery(hls, () => {
       if (destroyed) return;

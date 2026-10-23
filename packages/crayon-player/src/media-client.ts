@@ -10,14 +10,13 @@ export type MediaPreparer = (url: string, blockAds: boolean) => Promise<Prepared
 
 /** Safe messages only: never show an upstream URL, response body or credentials. */
 export class MediaPreparationError extends Error {
-  constructor(message: string, readonly browserFallback: boolean, readonly code: string) {
+  constructor(message: string, readonly code: string) {
     super(message);
     this.name = 'MediaPreparationError';
   }
 }
 
-export function mediaPreparationNotice(error: unknown, browserFallback = false): string {
-  if (browserFallback) return '服务端去广告暂不可用，已改用 Crayon 本地过滤；投屏仍需服务恢复';
+export function mediaPreparationNotice(error: unknown): string {
   return error instanceof MediaPreparationError ? error.message : '去广告清单准备失败，请稍后重试或更换片源';
 }
 
@@ -41,12 +40,12 @@ export function createMediaPreparer(endpoint = '/api/player/prepare'): MediaPrep
           signal: controller.signal,
         });
       } catch {
-        if (controller.signal.aborted) throw new MediaPreparationError('去广告服务响应超时，请稍后重试', true, 'SERVICE_TIMEOUT');
-        throw new MediaPreparationError('无法连接去广告服务，请检查网络后重试', true, 'SERVICE_UNREACHABLE');
+        if (controller.signal.aborted) throw new MediaPreparationError('去广告服务响应超时，请稍后重试','SERVICE_TIMEOUT');
+        throw new MediaPreparationError('无法连接去广告服务，请检查网络后重试','SERVICE_UNREACHABLE');
       } finally { clearTimeout(timer); }
       if (!response.ok) {
-        if (response.status === 401 || response.status === 403) throw new MediaPreparationError('登录已失效或无权准备清单，请重新登录', false, 'UNAUTHORIZED');
-        if (response.status === 503) throw new MediaPreparationError('去广告服务未就绪，请检查服务配置或稍后重试', true, 'SERVICE_UNAVAILABLE');
+        if (response.status === 401 || response.status === 403) throw new MediaPreparationError('登录已失效或无权准备清单，请重新登录','UNAUTHORIZED');
+        if (response.status === 503) throw new MediaPreparationError('去广告服务未就绪，请检查服务配置或稍后重试','SERVICE_UNAVAILABLE');
         let code: string | undefined;
         let upstreamStatus: number | undefined;
         try {
@@ -61,24 +60,24 @@ export function createMediaPreparer(endpoint = '/api/player/prepare'): MediaPrep
           INVALID_PLAYLIST: '片源返回的内容不是有效播放清单，请更换片源',
           INVALID_REQUEST: '播放地址或请求无效，请重新选集或更换片源',
         };
-        throw new MediaPreparationError(messages[code || ''] || '去广告服务暂时不可用，请稍后重试；若提示持续出现，请检查登录和服务配置', response.status >= 500 && code !== 'INVALID_REQUEST', code || 'SERVICE_ERROR');
+        throw new MediaPreparationError(messages[code || ''] || '去广告服务暂时不可用，请稍后重试；若提示持续出现，请检查登录和服务配置', code || 'SERVICE_ERROR');
       }
       let result: PreparedMedia;
       try { result = await response.json() as PreparedMedia; }
-      catch { throw new MediaPreparationError('播放服务返回了无效清单',false,'INVALID_RESPONSE'); }
+      catch { throw new MediaPreparationError('播放服务返回了无效清单','INVALID_RESPONSE'); }
       if (!result || typeof result.url !== 'string' || !result.url.trim() || !result.filter ||
         !Number.isFinite(result.filter.originalDuration) || result.filter.originalDuration < 0 ||
         !['filtered', 'no-match', 'unsupported'].includes(result.filter.reason) || !Array.isArray(result.filter.removed) ||
         !result.filter.removed.every((range, index, ranges) => range && Number.isFinite(range.start) && Number.isFinite(range.end) &&
           range.start >= 0 && range.end > range.start && range.end <= result.filter.originalDuration && (!index || ranges[index - 1].end <= range.start))) {
-        throw new MediaPreparationError('播放服务返回了无效清单',false,'INVALID_RESPONSE');
+        throw new MediaPreparationError('播放服务返回了无效清单','INVALID_RESPONSE');
       }
       let target: URL;
       try { target = new URL(result.url, document.baseURI); }
-      catch { throw new MediaPreparationError('播放服务返回了无效清单',false,'INVALID_RESPONSE'); }
-      if (!/^https?:$/.test(target.protocol) || target.username || target.password) throw new MediaPreparationError('播放服务返回了无效清单',false,'INVALID_RESPONSE');
+      catch { throw new MediaPreparationError('播放服务返回了无效清单','INVALID_RESPONSE'); }
+      if (!/^https?:$/.test(target.protocol) || target.username || target.password) throw new MediaPreparationError('播放服务返回了无效清单','INVALID_RESPONSE');
       expiresAt = result.expiresAt ?? now + 30 * 60 * 1000;
-      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() + 60000) throw new MediaPreparationError('播放清单已过期，请重试',false,'EXPIRED_RESPONSE');
+      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() + 60000) throw new MediaPreparationError('播放清单已过期，请重试','EXPIRED_RESPONSE');
       return { ...result, url: target.href };
     })();
     const entry = { created: now, get expiresAt() { return expiresAt; }, promise };

@@ -1,7 +1,6 @@
 import Hls from 'hls.js';
 
 import { configureInlineVideo } from './inline-video';
-import { MediaPreparationError } from './media-client';
 import { vodAdLoader } from './vod-ad-filter';
 import {
   filteredToSourceTime,
@@ -27,7 +26,7 @@ export function attachVodHls(
   blockAds = true,
   onAdFilter?: (result: VodAdFilterResult) => void,
   prepareSource?: (url: string) => Promise<{ url: string; filter: VodAdFilterResult }>,
-  onPreparationError?: (error: unknown, browserFallback: boolean) => void
+  onPreparationError?: (error: unknown) => void
 ): Hls | null {
   configureInlineVideo(video);
   video.hls?.destroy();
@@ -54,12 +53,7 @@ export function attachVodHls(
   // Only an explicit cast action installs a TV source and enables it again.
   video.disableRemotePlayback = true;
   const preparedPlayback = blockAds && !!prepareSource;
-  const browserLoader = () => vodAdLoader(Hls.DefaultConfig.loader, result => {
-    if (video.hls !== hls) return;
-    video.vodAdFilter = result;
-    onAdFilter?.(result);
-  });
-  const hls = new Hls({
+  const hls: Hls = new Hls({
     debug: false,
     enableWorker: true,
     lowLatencyMode: false,
@@ -71,7 +65,11 @@ export function attachVodHls(
     maxBufferHole: 0.3,
     // Filter actual ad segment groups while preserving retained HLS state.
     loader: blockAds && !preparedPlayback
-      ? browserLoader()
+      ? vodAdLoader(Hls.DefaultConfig.loader, result => {
+          if (video.hls !== hls) return;
+          video.vodAdFilter = result;
+          onAdFilter?.(result);
+        })
       : Hls.DefaultConfig.loader,
   });
   video.hls = hls;
@@ -96,15 +94,8 @@ export function attachVodHls(
     const failed = (error: unknown) => {
       if (video.vodNativeRequest !== request) return;
       video.vodNativePending = false;
-      // MSE can still filter the actual playlist in-browser when the relay
-      // cannot reach this provider. Never add a raw native/AirPlay alternative.
-      const fallback = !(error instanceof MediaPreparationError) || error.browserFallback;
-      if (fallback) {
-        hls.config.loader = browserLoader();
-        load(url);
-      }
-      // TVs still require a prepared HTTP playlist from an explicit cast action.
-      onPreparationError?.(error, fallback);
+      hls.destroy();
+      onPreparationError?.(error);
     };
     try {
       void prepareSource(url).then(prepared => load(prepared.url, prepared.filter)).catch(failed);

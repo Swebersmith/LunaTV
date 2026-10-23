@@ -1327,9 +1327,12 @@ function PlayPageClient() {
                 });
               },
               (url) => preparePlayerSource(url, true),
-              (error, browserFallback) => {
-                if (!browserFallback) setIsVideoLoading(false);
-                if (artPlayerRef.current) artPlayerRef.current.notice.show = mediaPreparationNotice(error, browserFallback);
+              (error) => {
+                setIsVideoLoading(false);
+                if (artPlayerRef.current) {
+                  artPlayerRef.current.loading.show = false;
+                  artPlayerRef.current.notice.show = mediaPreparationNotice(error);
+                }
               }
             );
             ensureVideoSource(video, url);

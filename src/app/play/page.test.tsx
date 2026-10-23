@@ -25,6 +25,7 @@ class MockArt {
   fullscreen = false;
   play = jest.fn(async () => undefined);
   notice = { show: '' };
+  loading = { show: true };
   setting = { update: jest.fn() };
   destroy = jest.fn();
   events: Record<string, (() => void)[]> = {};
@@ -162,6 +163,27 @@ it('keeps native-capable phones in MSE without injecting HTTP alternatives', asy
   expect(Hls.prototype.loadSource).toHaveBeenCalledWith(prepared.url);
   expect(player.setting.update).toHaveBeenCalledWith({name:'blockAds',tooltip:'已过滤 10.0 秒'});
   expect(global.fetch).toHaveBeenCalledWith('/api/player/prepare',expect.objectContaining({method:'POST',credentials:'same-origin'}));
+});
+
+it('stops loading and reports preparation failure without playing the original or another filtered path',async()=>{
+  firstUrl='https://media.example/failure.m3u8';
+  const defaultFetch=global.fetch;
+  global.fetch=jest.fn(async(input,init)=>String(input)==='/api/player/prepare'
+    ?{ok:false,status:503}
+    :defaultFetch(input,init)) as jest.Mock;
+  jest.spyOn(Hls.prototype,'loadSource').mockImplementation(()=>undefined);
+  jest.spyOn(Hls.prototype,'attachMedia').mockImplementation(()=>undefined);
+  await openPage();
+  const player=mockArtInstances[0], hlsType=player.options?.customType?.m3u8;
+  if(!hlsType)throw Error('Missing HLS player');
+  await act(async()=>{hlsType(player.video,firstUrl);});
+  expect(player.loading.show).toBe(false);
+  expect(player.notice.show).toContain('去广告服务未就绪');
+  expect(Hls.prototype.loadSource).not.toHaveBeenCalled();
+  expect(Hls.prototype.attachMedia).not.toHaveBeenCalled();
+  expect(player.video.hls).toBeUndefined();
+  expect(player.video.querySelector('source')).toBeNull();
+  expect(screen.queryByText('🔄 视频加载中...')).toBeNull();
 });
 
 it('ignores saved external-player preferences and keeps every episode in Crayon',async()=>{
