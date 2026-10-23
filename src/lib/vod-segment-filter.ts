@@ -28,6 +28,7 @@ interface SegmentGroup {
   segments: MediaSegment[];
   duration: number;
   directory: string | null;
+  explicitAdInsertion: boolean;
 }
 
 function attributes(line: string): Record<string, string> {
@@ -145,10 +146,22 @@ function parsePlaylist(content: string, baseUrl: string) {
         segments: [],
         duration: 0,
         directory: directory(segment.uri.trim(), baseUrl),
+        explicitAdInsertion: true,
       };
       groups.push(group);
     }
     group.segments.push(segment);
+    // Baofeng's /video/adjump/time/ is a dedicated insertion namespace.
+    // Check every URI in the bounded group, never an arbitrary "ad" substring.
+    try {
+      const path = decodeURIComponent(
+        new URL(segment.uri.trim(), baseUrl).pathname
+      );
+      group.explicitAdInsertion &&=
+        /(?:^|\/)video\/adjump\/time\/[^/]+\.ts$/i.test(path);
+    } catch {
+      group.explicitAdInsertion = false;
+    }
     group.duration += segment.duration;
     if (group.directory !== directory(segment.uri.trim(), baseUrl))
       group.directory = null;
@@ -223,6 +236,10 @@ function detectGroups(groups: SegmentGroup[], total: number): Set<number> {
     const values = group.segments.map((segment) => segment.duration);
     if (group.duration <= 0 || group.duration > 60 || group.directory === null)
       continue;
+    // Real Baofeng movie/series cadences vary, so a 70% modal-duration
+    // requirement cannot be used for explicit insertion paths. Their current
+    // ad package has nine fragments (8 x 3s + 2.04s), not at most eight.
+    if (group.explicitAdInsertion) removed.add(index);
     const keys = values.map(durationKey);
     const mainCount = mainDuration
       ? keys.filter((value) => value === mainDuration).length
