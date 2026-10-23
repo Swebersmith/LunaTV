@@ -17,7 +17,7 @@ export class MediaPreparationError extends Error {
 }
 
 export function mediaPreparationNotice(error: unknown, browserFallback = false): string {
-  if (browserFallback) return '服务端去广告暂不可用，已切换浏览器过滤；投屏仍需服务恢复';
+  if (browserFallback) return '服务端去广告暂不可用，已改用 Crayon 本地过滤；投屏仍需服务恢复';
   return error instanceof MediaPreparationError ? error.message : '去广告清单准备失败，请稍后重试或更换片源';
 }
 
@@ -32,14 +32,18 @@ export function createMediaPreparer(endpoint = '/api/player/prepare'): MediaPrep
     let expiresAt = Infinity;
     const promise: Promise<PreparedMedia> = (async () => {
       let response: Response;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
       try {
         response = await fetch(endpoint, {
           method: 'POST', credentials: 'same-origin', cache: 'no-store',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, blockAds }),
+          signal: controller.signal,
         });
       } catch {
+        if (controller.signal.aborted) throw new MediaPreparationError('去广告服务响应超时，请稍后重试', true, 'SERVICE_TIMEOUT');
         throw new MediaPreparationError('无法连接去广告服务，请检查网络后重试', true, 'SERVICE_UNREACHABLE');
-      }
+      } finally { clearTimeout(timer); }
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) throw new MediaPreparationError('登录已失效或无权准备清单，请重新登录', false, 'UNAUTHORIZED');
         if (response.status === 503) throw new MediaPreparationError('去广告服务未就绪，请检查服务配置或稍后重试', true, 'SERVICE_UNAVAILABLE');

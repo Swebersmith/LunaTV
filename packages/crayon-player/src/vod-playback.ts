@@ -1,5 +1,6 @@
 import Hls from 'hls.js';
 
+import { configureInlineVideo } from './inline-video';
 import { MediaPreparationError } from './media-client';
 import { vodAdLoader } from './vod-ad-filter';
 import {
@@ -13,7 +14,7 @@ declare global {
     hls?: Hls;
     vodAdFilter?: VodAdFilterResult;
     vodNativeRequest?: object;
-    /** Preparation blocks every playback path, including MSE and native alternatives. */
+    /** Preparation blocks local playback until a filtered source or loader is ready. */
     vodNativePending?: boolean;
     vodPlaybackUrl?: string;
   }
@@ -28,11 +29,12 @@ export function attachVodHls(
   prepareSource?: (url: string) => Promise<{ url: string; filter: VodAdFilterResult }>,
   onPreparationError?: (error: unknown, browserFallback: boolean) => void
 ): Hls | null {
+  configureInlineVideo(video);
   video.hls?.destroy();
   delete video.hls;
   delete video.vodAdFilter;
   delete video.vodPlaybackUrl;
-  // Remove the previous native source and its buffered media before async preparation.
+  // Clear the previous episode or explicit casting source before preparation.
   const hadSource = video.hasAttribute('src') || !!video.querySelector('source');
   video.removeAttribute('src');
   video.querySelectorAll('source').forEach(source => source.remove());
@@ -41,21 +43,23 @@ export function attachVodHls(
   video.vodNativeRequest = request;
   video.vodNativePending = false;
   const mse = Hls.isSupported();
-  const native = !!video.canPlayType('application/vnd.apple.mpegurl');
-  // iPad may support BOTH MSE/MMS and native HLS. A prepared HTTP playlist is
-  // already filtered, so native playback can use it without a second JS engine.
-  const useNative = native && (!mse || !!prepareSource);
-  if (!mse && !native) {
+  // Local HLS always stays in Crayon's MSE/MMS player. A native HLS capability
+  // must never switch the phone to a different playback path or system UI.
+  if (!mse) {
+    delete video.vodNativeRequest;
     onUnsupported();
     return null;
   }
+  // MMS can open without an HTTP alternative when remote playback is disabled.
+  // Only an explicit cast action installs a TV source and enables it again.
+  video.disableRemotePlayback = true;
   const preparedPlayback = blockAds && !!prepareSource;
   const browserLoader = () => vodAdLoader(Hls.DefaultConfig.loader, result => {
     if (video.hls !== hls) return;
     video.vodAdFilter = result;
     onAdFilter?.(result);
   });
-  const hls: Hls | null = useNative ? null : new Hls({
+  const hls = new Hls({
     debug: false,
     enableWorker: true,
     lowLatencyMode: false,
@@ -70,30 +74,21 @@ export function attachVodHls(
       ? browserLoader()
       : Hls.DefaultConfig.loader,
   });
-  if (hls) {
-    video.hls = hls;
-    hls.on(Hls.Events.DESTROYING, () => {
-      if (video.hls === hls) delete video.hls;
-      if (video.vodNativeRequest === request) {
-        delete video.vodNativeRequest;
-        video.vodNativePending = false;
-      }
-    });
-  }
-  const load = (playbackUrl: string, filter?: VodAdFilterResult, browserFallback = false) => {
-    if (video.vodNativeRequest !== request || hls && video.hls !== hls) return;
+  video.hls = hls;
+  hls.on(Hls.Events.DESTROYING, () => {
+    if (video.hls === hls) delete video.hls;
+    if (video.vodNativeRequest === request) {
+      delete video.vodNativeRequest;
+      video.vodNativePending = false;
+    }
+  });
+  const load = (playbackUrl: string, filter?: VodAdFilterResult) => {
+    if (video.vodNativeRequest !== request || video.hls !== hls) return;
     video.vodNativePending = false;
     video.vodPlaybackUrl = playbackUrl;
     if (filter) video.vodAdFilter = filter;
-    if (hls) {
-      hls.loadSource(playbackUrl);
-      hls.attachMedia(video);
-      // A raw fallback would bypass client-side filtering in standalone mode.
-      if (!browserFallback && (preparedPlayback || !blockAds)) setHlsAlternative(video, playbackUrl);
-    } else {
-      setHlsAlternative(video, playbackUrl);
-      video.src = playbackUrl;
-    }
+    hls.loadSource(playbackUrl);
+    hls.attachMedia(video);
     if (filter) onAdFilter?.(filter);
   };
   if (preparedPlayback && prepareSource) {
@@ -103,12 +98,12 @@ export function attachVodHls(
       video.vodNativePending = false;
       // MSE can still filter the actual playlist in-browser when the relay
       // cannot reach this provider. Never add a raw native/AirPlay alternative.
-      const fallback = !!hls && (!(error instanceof MediaPreparationError) || error.browserFallback);
-      if (fallback && hls) {
+      const fallback = !(error instanceof MediaPreparationError) || error.browserFallback;
+      if (fallback) {
         hls.config.loader = browserLoader();
-        load(url, undefined, true);
+        load(url);
       }
-      // Native playback and TVs still require a prepared HTTP playlist.
+      // TVs still require a prepared HTTP playlist from an explicit cast action.
       onPreparationError?.(error, fallback);
     };
     try {
@@ -118,7 +113,19 @@ export function attachVodHls(
   return hls;
 }
 
-/** Keep HLS.js's MMS blob source; only replace the HTTP alternative. */
+/** Bound fatal recovery instead of leaving the player in an endless load loop. */
+export function attachVodRecovery(hls: Hls, onFailure: () => void) {
+  let attempts = 0;
+  hls.on(Hls.Events.ERROR, (_event, data) => {
+    if (!data.fatal) return;
+    if (++attempts <= 3 && data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+    else if (attempts <= 3 && data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+    else { hls.destroy(); onFailure(); }
+  });
+  hls.on(Hls.Events.FRAG_LOADED, () => { attempts = 0; });
+}
+
+/** Explicit casting only. Preserve the MMS blob while installing a TV URL. */
 export function setHlsAlternative(video: HTMLVideoElement, url: string) {
   video.querySelectorAll('source').forEach(source => {
     if (!source.src.startsWith('blob:')) source.remove();

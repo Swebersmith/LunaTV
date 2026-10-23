@@ -19,6 +19,7 @@ beforeEach(() => {
   jest.spyOn(Hls, 'isSupported').mockReturnValue(true);
   // jsdom has no MediaSource; keep the real HLS playlist parser and loaders.
   jest.spyOn(Hls.prototype, 'attachMedia').mockImplementation(() => undefined);
+  jest.spyOn(video, 'load').mockImplementation(() => undefined);
 });
 
 afterEach(() => {
@@ -221,16 +222,16 @@ it('retains original fragments, rotated keys and fMP4 maps', () => {
   expect(fragments[2].decryptdata?.iv?.[15]).toBe(2);
 });
 
-it('falls back to native HLS on Safari without constructing an unsupported engine', () => {
+it('refuses native fallback on Safari without constructing an unsupported engine', () => {
   jest.spyOn(Hls, 'isSupported').mockReturnValue(false);
   jest.spyOn(video, 'canPlayType').mockReturnValue('maybe');
   expect(
     attachVodHls(video, 'https://media.test/movie.m3u8', unsupported)
   ).toBeNull();
-  expect(video.src).toBe('https://media.test/movie.m3u8');
+  expect(video.hasAttribute('src')).toBe(false);
   expect(video.hls).toBeUndefined();
   expect(Hls.prototype.attachMedia).not.toHaveBeenCalled();
-  expect(unsupported).not.toHaveBeenCalled();
+  expect(unsupported).toHaveBeenCalledTimes(1);
 });
 
 it('reports a browser with neither MSE nor native HLS support', () => {
@@ -242,4 +243,28 @@ it('reports a browser with neither MSE nor native HLS support', () => {
   expect(unsupported).toHaveBeenCalledTimes(1);
   expect(video.hls).toBeUndefined();
   expect(video.hasAttribute('src')).toBe(false);
+});
+it('uses the server-filtered source in MSE on a native-capable phone and exposes its original timeline metadata', async () => {
+  jest.spyOn(Hls.prototype,'loadSource').mockImplementation(()=>undefined);
+  jest.spyOn(video,'canPlayType').mockReturnValue('maybe');
+  const filter = {playlist:'',originalDuration:100,removed:[{start:30,end:40}],reason:'filtered' as const};
+  const onFilter = jest.fn();
+  attachVodHls(video,'https://media.test/original.m3u8',unsupported,true,onFilter,async()=>({url:'https://tv.test/api/player/media?token=native',filter}));
+  expect(video.src).toBe('');
+  expect(video.vodNativePending).toBe(true);
+  await Promise.resolve(); await Promise.resolve();
+  expect(video.src).toBe('');
+  expect(Hls.prototype.loadSource).toHaveBeenCalledWith('https://tv.test/api/player/media?token=native');
+  expect(video.vodAdFilter).toBe(filter);
+  expect(onFilter).toHaveBeenCalledWith(filter);
+});
+it('does not load the old preparation after switching or destroying the player', async () => {
+  jest.spyOn(video,'canPlayType').mockReturnValue('maybe');
+  const staleFilter = {playlist:'',originalDuration:0,removed:[],reason:'no-match' as const};
+  let finish!: (value:{url:string;filter:typeof staleFilter})=>void;
+  attachVodHls(video,'https://media.test/old.m3u8',unsupported,true,undefined,()=>new Promise(resolve=>{finish=resolve;}));
+  delete video.vodNativeRequest;
+  finish({url:'https://tv.test/old',filter:staleFilter});
+  await Promise.resolve(); await Promise.resolve();
+  expect(video.src).toBe('');
 });

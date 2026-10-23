@@ -26,12 +26,11 @@ import {
 import { mediaPreparationNotice, prepareCastSource, preparePlayerSource } from '@/lib/player-source';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
-import { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from '@/lib/vod-playback';
-import { buildJuliangPlayerUrl, isJuliangPlayerUrl, readVodPlayerPreferences, saveVodPlayerPreferences, VodPlayerPreferences } from '@/lib/vod-player';
+import { attachVodHls, attachVodRecovery, vodFilteredTime, vodSourceDuration, vodSourceTime } from '@/lib/vod-playback';
+import { isJuliangPlayerUrl } from '@/lib/vod-player';
 
 import EpisodeSelector from '@/components/EpisodeSelector';
 import PageLayout from '@/components/PageLayout';
-import { JuliangPlayer, VodPlayerSelector } from '@/components/VodPlayerSelector';
 
 // Wake Lock API 类型声明
 interface WakeLockSentinel {
@@ -147,14 +146,6 @@ function PlayPageClient() {
 
   // 视频播放地址
   const [videoUrl, setVideoUrl] = useState('');
-  const [playerPreferences, setPlayerPreferences] = useState<VodPlayerPreferences>({
-    player: 'artplayer', entry: 'main', smartMatch: true,
-  });
-  useEffect(() => setPlayerPreferences(readVodPlayerPreferences()), []);
-  const fullPlayerSource = isJuliangPlayerUrl(videoUrl);
-  const activePlayer = fullPlayerSource ? 'juliang' : playerPreferences.player;
-  const externalPlayerUrl = buildJuliangPlayerUrl(videoUrl, playerPreferences.entry, playerPreferences.smartMatch);
-  const builtinResumeRef = useRef<{ url: string; time: number } | null>(null);
   const episodeAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volumeRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1039,7 +1030,7 @@ function PlayPageClient() {
     // f 键 = 切换全屏
     if (e.key === 'f' || e.key === 'F') {
       if (artPlayerRef.current) {
-        artPlayerRef.current.fullscreen = !artPlayerRef.current.fullscreen;
+        artPlayerRef.current.fullscreenWeb = !artPlayerRef.current.fullscreenWeb;
         e.preventDefault();
       }
     }
@@ -1217,29 +1208,10 @@ function PlayPageClient() {
     }
   };
 
-  const handlePlayerPreferenceChange = (value: VodPlayerPreferences) => {
-    if (value.player !== activePlayer) {
-      if (artPlayerRef.current) {
-        builtinResumeRef.current = { url: videoUrl, time: sourceTime() };
-        saveCurrentPlayProgress();
-        cleanupPlayer();
-        releaseWakeLock();
-      }
-      if (value.player === 'artplayer') {
-        // External players own a separate timeline (ad filtering may shorten it).
-        // Restore only the built-in position for this exact episode/source.
-        resumeTimeRef.current = builtinResumeRef.current?.url === videoUrl ? builtinResumeRef.current.time : 0;
-        setIsVideoLoading(true);
-      }
-    }
-    setPlayerPreferences(value);
-    saveVodPlayerPreferences(value);
-  };
-
   useEffect(() => {
-    if (activePlayer !== 'artplayer') {
-      cleanupPlayer();
-      releaseWakeLock();
+    if (isJuliangPlayerUrl(videoUrl)) {
+      setIsVideoLoading(false);
+      setError('此片源提供的是外部播放网页，Crayon Player 需要视频流，请更换片源。');
       return;
     }
     if (
@@ -1313,7 +1285,7 @@ function PlayPageClient() {
         flip: false,
         playbackRate: true,
         aspectRatio: false,
-        fullscreen: true,
+        fullscreen: false,
         fullscreenWeb: true,
         subtitleOffset: false,
         miniProgressBar: false,
@@ -1340,7 +1312,10 @@ function PlayPageClient() {
             const hls = attachVodHls(
               video,
               url,
-              () => setError('当前浏览器不支持 HLS 视频，请使用新版浏览器。'),
+              () => {
+                setIsVideoLoading(false);
+                setError('此浏览器不支持 Crayon 网页播放，请更新浏览器后重试。');
+              },
               blockAdEnabledRef.current,
               (result) => {
                 const removedSeconds = result.removed.reduce((sum, range) => sum + range.end - range.start, 0);
@@ -1360,24 +1335,9 @@ function PlayPageClient() {
             ensureVideoSource(video, url);
             if (!hls) return;
 
-            hls.on(Hls.Events.ERROR, function (event: any, data: any) {
-              console.error('HLS Error:', event, data);
-              if (data.fatal) {
-                switch (data.type) {
-                  case Hls.ErrorTypes.NETWORK_ERROR:
-                    console.log('网络错误，尝试恢复...');
-                    hls.startLoad();
-                    break;
-                  case Hls.ErrorTypes.MEDIA_ERROR:
-                    console.log('媒体错误，尝试恢复...');
-                    hls.recoverMediaError();
-                    break;
-                  default:
-                    console.log('无法恢复的错误');
-                    hls.destroy();
-                    break;
-                }
-              }
+            attachVodRecovery(hls, () => {
+              setIsVideoLoading(false);
+              setError('视频加载失败，请重试或更换片源。');
             });
           },
         },
@@ -1656,7 +1616,7 @@ function PlayPageClient() {
       console.error('创建播放器失败:', err);
       setError('播放器初始化失败');
     }
-  }, [Artplayer, Hls, videoUrl, loading, blockAdEnabled, activePlayer]);
+  }, [Artplayer, Hls, videoUrl, loading, blockAdEnabled]);
 
   // 当组件卸载时清理定时器、Wake Lock 和播放器资源
   useEffect(() => {
@@ -1845,12 +1805,6 @@ function PlayPageClient() {
             )}
           </h1>
         </div>
-        <VodPlayerSelector
-          value={{ ...playerPreferences, player: activePlayer }}
-          onChange={handlePlayerPreferenceChange}
-          externalUrl={externalPlayerUrl}
-          fullPlayerSource={fullPlayerSource}
-        />
         {/* 第二行：播放器和选集 */}
         <div className='space-y-2'>
           {/* 折叠控制 - 仅在 lg 及以上屏幕显示 */}
@@ -1906,15 +1860,11 @@ function PlayPageClient() {
               <div className='relative w-full h-[300px] lg:h-full'>
                 <div
                   ref={artRef}
-                  hidden={activePlayer !== 'artplayer'}
                   className='bg-black w-full h-full rounded-xl overflow-hidden shadow-lg'
                 ></div>
-                {activePlayer === 'juliang' && (
-                  <JuliangPlayer key={externalPlayerUrl || videoUrl} url={externalPlayerUrl} title={videoTitle} />
-                )}
 
                 {/* 换源加载蒙层 */}
-                {activePlayer === 'artplayer' && isVideoLoading && (
+                {isVideoLoading && (
                   <div className='absolute inset-0 bg-black/85 backdrop-blur-sm rounded-xl flex items-center justify-center z-[500] transition-all duration-300'>
                     <div className='text-center max-w-md mx-auto px-6'>
                       {/* 动画影院图标 */}
@@ -1946,6 +1896,20 @@ function PlayPageClient() {
                             ? '🔄 切换播放源...'
                             : '🔄 视频加载中...'}
                         </p>
+                        <button
+                          type='button'
+                          className='mt-3 rounded-xl bg-green-600 px-5 py-2 font-medium text-white hover:bg-green-500'
+                          onClick={() => {
+                            const player = artPlayerRef.current;
+                            if (!player) return;
+                            setIsVideoLoading(false);
+                            void player.play().catch(() => {
+                              player.notice.show = '请点击 Crayon 播放按钮开始播放';
+                            });
+                          }}
+                        >
+                          点击播放
+                        </button>
                       </div>
                     </div>
                   </div>

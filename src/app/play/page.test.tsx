@@ -21,6 +21,9 @@ class MockArt {
   volume = 0.7;
   playbackRate = 1;
   paused = true;
+  fullscreenWeb = false;
+  fullscreen = false;
+  play = jest.fn(async () => undefined);
   notice = { show: '' };
   setting = { update: jest.fn() };
   destroy = jest.fn();
@@ -118,14 +121,16 @@ async function openPage() {
     jest.advanceTimersByTime(1000);
   });
 }
-function frame() {
-  return screen.getByTitle('巨量播放器 · PlayerDemo');
-}
 
-it('embeds Crayon Player with enhanced touch/casting and keeps the saved built-in preference', async () => {
+
+it('embeds only Crayon Player with enhanced touch/casting and webpage fullscreen', async () => {
   await openPage();
-  expect(screen.getByRole('button', { name: 'Crayon Player' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByRole('group', { name: '选择播放器' })).toBeNull();
+  expect(document.querySelector('iframe')).toBeNull();
   expect(mockArtInstances[0].options).toEqual(expect.objectContaining({
+    playsInline: true,
+    fullscreen: false,
+    fullscreenWeb: true,
     gesture: false,
     fastForward: false,
     plugins: [expect.any(Function)],
@@ -133,7 +138,7 @@ it('embeds Crayon Player with enhanced touch/casting and keeps the saved built-i
   }));
 });
 
-it('never injects raw HLS alternatives before iPad native preparation completes', async () => {
+it('keeps native-capable phones in MSE without injecting HTTP alternatives', async () => {
   const defaultFetch = global.fetch;
   const filter = {playlist:'', originalDuration:100, removed:[{start:30,end:40}], reason:'filtered'};
   const prepared = {url:'https://tv.example/api/player/media?token=clean',filter};
@@ -141,6 +146,8 @@ it('never injects raw HLS alternatives before iPad native preparation completes'
     ? {ok:true,json:async():Promise<typeof prepared>=>prepared}
     : defaultFetch(input,init)) as jest.Mock;
   jest.spyOn(HTMLMediaElement.prototype,'canPlayType').mockReturnValue('probably');
+  jest.spyOn(Hls.prototype,'loadSource').mockImplementation(()=>undefined);
+  jest.spyOn(Hls.prototype,'attachMedia').mockImplementation(()=>undefined);
   await openPage();
   const player = mockArtInstances[0];
   expect(player.video.querySelector('source')).toBeNull();
@@ -148,112 +155,63 @@ it('never injects raw HLS alternatives before iPad native preparation completes'
   const hlsType = player.options?.customType?.m3u8;
   if (!hlsType) throw new Error('Missing HLS playback configuration');
   await act(async () => { hlsType(player.video, firstUrl); });
-  expect(player.video.src).toBe('https://tv.example/api/player/media?token=clean');
-  expect(Array.from(player.video.querySelectorAll('source')).map(source=>source.src)).toEqual([player.video.src]);
+  expect(player.video.src).toBe('');
+  expect(player.video.querySelector('source')).toBeNull();
+  expect(player.video.hls).toBeDefined();
+  expect(player.video.disableRemotePlayback).toBe(true);
+  expect(Hls.prototype.loadSource).toHaveBeenCalledWith(prepared.url);
   expect(player.setting.update).toHaveBeenCalledWith({name:'blockAds',tooltip:'已过滤 10.0 秒'});
   expect(global.fetch).toHaveBeenCalledWith('/api/player/prepare',expect.objectContaining({method:'POST',credentials:'same-origin'}));
 });
 
-it('releases HLS and pending auto-next when switching, then restores only the built-in position', async () => {
+it('ignores saved external-player preferences and keeps every episode in Crayon',async()=>{
+  localStorage.setItem(VOD_PLAYER_STORAGE_KEY,JSON.stringify({player:'juliang',entry:'backup1',smartMatch:false}));
   await openPage();
-  const native = mockArtInstances[0];
-  const destroyHls = jest.fn();
-  native.video.hls = { destroy: destroyHls } as unknown as NonNullable<
-    HTMLVideoElement['hls']
-  >;
-  native.currentTime = 27;
-  act(() => native.emit('video:ended'));
-  fireEvent.click(screen.getByRole('button', { name: '巨量播放器' }));
-  expect(native.destroy).toHaveBeenCalledTimes(1);
-  expect(destroyHls).toHaveBeenCalledTimes(1);
-  expect(savePlayRecord).toHaveBeenCalledWith(
-    'test',
-    '1',
-    expect.objectContaining({ play_time: 27, index: 1 })
-  );
-  expect(
-    new URL(frame().getAttribute('src') || '').searchParams.get('url')
-  ).toBe(firstUrl);
-  expect(frame()).toHaveAttribute(
-    'allow',
-    'autoplay; fullscreen; picture-in-picture'
-  );
-  expect(frame()).toHaveAttribute('allowfullscreen');
-  expect(frame()).not.toHaveAttribute('sandbox');
+  expect(mockArtInstances).toHaveLength(1);
+  expect(document.querySelector('iframe')).toBeNull();
+  expect(screen.queryByRole('link',{name:'独立打开'})).toBeNull();
+  expect(screen.queryByRole('button',{name:'巨量播放器'})).toBeNull();
+  fireEvent.click(screen.getByRole('button',{name:'选择第二集'}));
+  expect((mockArtInstances[0] as unknown as {switch:string}).switch).toBe('https://media.example/2.m3u8');
+  expect(document.querySelector('iframe')).toBeNull();
+});
+
+it('rejects external player pages instead of opening another player or feeding HTML into HLS',async()=>{
+  firstUrl='https://jimaoys99.com/s/movie?episode=2';
+  await openPage();
+  expect(screen.getByText(/Crayon Player 需要视频流/)).toBeVisible();
+  expect(mockArtInstances).toHaveLength(0);
+  expect(document.querySelector('iframe')).toBeNull();
   expect(screen.queryByText('🔄 视频加载中...')).toBeNull();
-  act(() => jest.advanceTimersByTime(1500));
-  expect(
-    new URL(frame().getAttribute('src') || '').searchParams.get('url')
-  ).toBe(firstUrl);
-  fireEvent.click(screen.getByRole('button', { name: 'Crayon Player' }));
-  expect(screen.queryByTitle('巨量播放器 · PlayerDemo')).toBeNull();
-  const restored = mockArtInstances[1];
-  act(() => restored.emit('video:canplay'));
-  expect(restored.currentTime).toBe(27);
 });
 
-it('remembers selection, changes backup/matching independently, and replaces the iframe on episode changes', async () => {
-  localStorage.setItem(
-    VOD_PLAYER_STORAGE_KEY,
-    JSON.stringify({ player: 'juliang', entry: 'backup1', smartMatch: false })
-  );
+it('starts Crayon from the loading overlay when autoplay needs a user gesture',async()=>{
   await openPage();
-  expect(mockArtInstances).toHaveLength(0);
-  const firstFrame = frame();
-  expect(new URL(firstFrame.getAttribute('src') || '').hostname).toBe(
-    'jimaoys97.com'
-  );
-  expect(
-    new URL(firstFrame.getAttribute('src') || '').searchParams.get('match')
-  ).toBe('0');
-  fireEvent.change(screen.getByRole('combobox', { name: '巨量播放器入口' }), {
-    target: { value: 'backup2' },
-  });
-  expect(frame()).not.toBe(firstFrame);
-  fireEvent.click(screen.getByRole('checkbox', { name: '智能匹配线路' }));
-  expect(
-    new URL(frame().getAttribute('src') || '').searchParams.has('match')
-  ).toBe(false);
-  fireEvent.click(screen.getByRole('button', { name: '选择第二集' }));
-  expect(
-    new URL(frame().getAttribute('src') || '').searchParams.get('url')
-  ).toBe('https://media.example/2.m3u8');
-  expect(screen.getByRole('link', { name: '独立打开' })).toHaveAttribute(
-    'href',
-    frame().getAttribute('src')
-  );
-  expect(
-    JSON.parse(localStorage.getItem(VOD_PLAYER_STORAGE_KEY) || '{}')
-  ).toEqual({
-    player: 'juliang',
-    entry: 'backup2',
-    smartMatch: true,
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Crayon Player' }));
-  act(() => mockArtInstances[0].emit('video:canplay'));
-  expect(mockArtInstances[0].currentTime).toBe(0);
+  fireEvent.click(screen.getByRole('button',{name:'点击播放'}));
+  expect(mockArtInstances[0].play).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText('🔄 视频加载中...')).toBeNull();
+  expect(document.querySelector('iframe')).toBeNull();
 });
 
-it('opens complete jlplayer pages directly and prevents sending HTML pages to HLS', async () => {
-  firstUrl = 'https://jimaoys99.com/s/movie?episode=2';
+it('uses webpage fullscreen for the F shortcut instead of native fullscreen',async()=>{
   await openPage();
-  expect(frame()).toHaveAttribute('src', firstUrl);
-  expect(mockArtInstances).toHaveLength(0);
-  expect(screen.getByRole('button', { name: 'Crayon Player' })).toBeDisabled();
+  fireEvent.keyDown(document,{key:'f'});
+  expect(mockArtInstances[0].fullscreenWeb).toBe(true);
+  expect(mockArtInstances[0].fullscreen).toBe(false);
 });
 
-it('keeps fallback controls usable when an entry is slow and does not claim video readiness from iframe load', async () => {
-  localStorage.setItem(
-    VOD_PLAYER_STORAGE_KEY,
-    JSON.stringify({ player: 'juliang' })
-  );
+it('reports unsupported MSE and stops loading even when the phone can play native HLS',async()=>{
   await openPage();
-  act(() => jest.advanceTimersByTime(12000));
-  expect(screen.getByRole('status')).toHaveTextContent('切换备用入口');
-  fireEvent.load(frame());
-  expect(screen.getByRole('status')).toHaveTextContent('未出画面');
-  fireEvent.click(screen.getByText('广告屏蔽与使用说明'));
-  expect(screen.getByText(/进度不会同步到本站/)).toBeVisible();
+  jest.spyOn(Hls,'isSupported').mockReturnValue(false);
+  jest.spyOn(HTMLMediaElement.prototype,'canPlayType').mockReturnValue('probably');
+  const player=mockArtInstances[0];
+  const hlsType=player.options?.customType?.m3u8;
+  if(!hlsType)throw Error('Missing HLS player');
+  act(()=>hlsType(player.video,firstUrl));
+  expect(screen.getByText(/此浏览器不支持 Crayon 网页播放/)).toBeVisible();
+  expect(player.video.hasAttribute('src')).toBe(false);
+  expect(player.video.querySelector('source')).toBeNull();
+  expect(document.querySelector('iframe')).toBeNull();
 });
 
 it('saves source progress and converts it when ad filtering is toggled in either direction', async () => {

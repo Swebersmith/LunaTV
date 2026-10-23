@@ -4,7 +4,7 @@ import Hls from 'hls.js';
 import { createCrayonPlayerCore } from './core';
 import { createMediaPreparer, mediaPreparationNotice,MediaPreparer } from './media-client';
 import { EnhancementOptions } from './plugin';
-import { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from './vod-playback';
+import { attachVodHls, attachVodRecovery, vodFilteredTime, vodSourceDuration, vodSourceTime } from './vod-playback';
 import { sourceToFilteredTime } from './vod-segment-filter';
 
 export type { CastOptions, CastSource, PreparedCastSource } from './casting';
@@ -57,7 +57,6 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
   let advanced = false;
   let wake: { release(): Promise<void> } | undefined;
   let wakePending = false;
-  let recoveryCount = 0;
   const skip = { enabled: false, intro: 0, outro: 0, ...options.skip };
   try {
     const saved = options.storageKey && localStorage.getItem(options.storageKey);
@@ -68,24 +67,29 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
   } catch { /* Storage is optional in private browsing. */ }
   const sourceUrl = () => art?.option.url || options.url;
   const hlsType = (video: HTMLVideoElement, url: string) => {
-    // attachVodHls owns both the engine and its native/AirPlay alternative.
+    // Local playback always uses Crayon's MSE/MMS engine and inline controls.
     const hls = attachVodHls(video, url, () => {
-      queueMicrotask(() => { if (!destroyed) art.notice.show = '此浏览器不支持 HLS 播放'; });
+      queueMicrotask(() => {
+        if (!destroyed) {
+          art.loading.show = false;
+          art.notice.show = '此浏览器不支持 Crayon 网页播放，请更新浏览器后重试';
+        }
+      });
     }, blocked,
       result => {
         const seconds = result.removed.reduce((sum, range) => sum + range.end - range.start, 0);
         art.setting.update({ name: 'blockAds', tooltip: seconds ? `已过滤 ${seconds.toFixed(1)} 秒` : result.reason === 'unsupported' ? '已开启 · 当前格式暂不支持过滤' : '已开启 · 未识别出可过滤广告' });
       },
       prepareMedia ? url => prepareMedia(url,blocked) : undefined,
-      (error, fallback) => { art.notice.show = mediaPreparationNotice(error, fallback); });
-    hls?.on(Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal || destroyed) return;
-      if (++recoveryCount > 3) { hls.destroy(); art.notice.show = '视频加载失败，请检查片源后重试'; return; }
-      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-      else { hls.destroy(); art.notice.show = '视频加载失败，请更换片源'; }
+      (error, fallback) => {
+        if (!fallback) art.loading.show = false;
+        art.notice.show = mediaPreparationNotice(error, fallback);
+      });
+    if (hls) attachVodRecovery(hls, () => {
+      if (destroyed) return;
+      art.loading.show = false;
+      art.notice.show = '视频加载失败，请重试或更换片源';
     });
-    hls?.on(Hls.Events.FRAG_LOADED, () => { recoveryCount = 0; });
   };
   const next = () => {
     if (advanced) return;
@@ -103,10 +107,9 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
     customType: { m3u8: hlsType, ...playerOptions.customType },
     settings: [
       { name: 'blockAds', html: '去广告', tooltip: blocked ? '已开启' : '已关闭', onClick() {
-        if (!Hls.isSupported() && !prepareMedia) return '原生播放需要配置去广告服务';
+        if (!Hls.isSupported()) return '此浏览器不支持 Crayon 网页播放';
         resume = vodSourceTime(art.video);
         blocked = !blocked;
-        recoveryCount = 0;
         hlsType(art.video, sourceUrl());
         return blocked ? '已开启' : '已关闭';
       } },
