@@ -4,11 +4,13 @@ import Hls from 'hls.js';
 import { createCrayonPlayerCore } from './core';
 import { EnhancementOptions } from './plugin';
 import { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from './vod-playback';
+import type { VodAdFilterResult } from './vod-segment-filter';
+import { sourceToFilteredTime } from './vod-segment-filter';
 
 export { attachGestures } from './gestures';
 export type { GestureOptions } from './gestures';
 export { attachCasting, prepareCastSdk } from './casting';
-export type { CastOptions } from './casting';
+export type { CastOptions, CastSource, PreparedCastSource } from './casting';
 export { crayonPlayerPlugin } from './plugin';
 export { createCrayonPlayerCore } from './core';
 export type { CrayonPlayerCoreOptions } from './core';
@@ -33,6 +35,7 @@ export interface CrayonPlayerOptions {
   onProgress?: (sourceTime: number, sourceDuration: number) => void;
   enhancements?: EnhancementOptions;
   artplayer?: Partial<ArtOptions>;
+  prepareMedia?: (url: string, blockAds: boolean) => Promise<{ url: string; type?: string; filter: VodAdFilterResult }>;
 }
 
 /** Standalone VOD player. Host applications can also install just crayonPlayerPlugin. */
@@ -61,14 +64,16 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
     const source = document.createElement('source');
     source.src = url;
     source.type = 'application/vnd.apple.mpegurl';
-    video.appendChild(source);
+    if (!(blocked && options.prepareMedia && !Hls.isSupported())) video.appendChild(source);
     const hls = attachVodHls(video, url, () => {
       queueMicrotask(() => { if (!destroyed) art.notice.show = '此浏览器不支持 HLS 播放'; });
     }, blocked,
       result => {
         const seconds = result.removed.reduce((sum, range) => sum + range.end - range.start, 0);
         art.setting.update({ name: 'blockAds', tooltip: seconds ? `已过滤 ${seconds.toFixed(1)} 秒` : '已开启 · 未命中或暂不支持' });
-      });
+      },
+      options.prepareMedia ? url => options.prepareMedia!(url,blocked) : undefined,
+      () => { art.notice.show = '去广告清单加载失败，请重试或关闭去广告'; });
     hls?.on(Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal || destroyed) return;
       if (++recoveryCount > 3) { hls.destroy(); art.notice.show = '视频加载失败，请检查片源后重试'; return; }
@@ -94,7 +99,7 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
     customType: { m3u8: hlsType, ...options.artplayer?.customType },
     settings: [
       { name: 'blockAds', html: '去广告', tooltip: blocked ? '已开启' : '已关闭', onClick() {
-        if (!Hls.isSupported()) return '原生播放模式不支持分片过滤';
+        if (!Hls.isSupported() && !options.prepareMedia) return '原生播放需要配置去广告服务';
         resume = vodSourceTime(art.video);
         blocked = !blocked;
         recoveryCount = 0;
@@ -115,6 +120,10 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
     ...options.enhancements,
     casting: options.enhancements?.casting === false ? false : {
       getSource: () => ({ url: sourceUrl(), title: art.title, currentTime: vodSourceTime(art.video) }),
+      ...(options.prepareMedia ? { prepareSource: async (source: { url: string; title?: string }) => {
+        const prepared = await options.prepareMedia!(source.url,blocked);
+        return { ...source,...prepared, mapTime: (time: number) => sourceToFilteredTime(prepared.filter.removed,time) };
+      } } : {}),
       ...options.enhancements?.casting,
     },
   });
@@ -166,6 +175,7 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
   art.on('destroy', () => {
     save();
     destroyed = true;
+    delete art.video.vodNativeRequest;
     void releaseWake();
     art.video.hls?.destroy();
     delete art.video.hls;

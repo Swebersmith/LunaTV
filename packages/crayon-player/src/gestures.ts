@@ -9,23 +9,23 @@ export interface GestureOptions {
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
 
+type Zone = 'left' | 'center' | 'right';
+
 /** Own only touches on the picture. Native controls, mouse and lock stay usable. */
 export function attachGestures(art: Artplayer, options: GestureOptions = {}) {
   const root = art.template.$player;
   const video = art.video;
   const seekSeconds = options.seekSeconds ?? 10;
   const holdRate = options.holdRate ?? 2;
-  let brightness = 1;
-  const originalFilter = video.style.filter;
   const originalTouchAction = video.style.touchAction;
   video.style.touchAction = 'none';
   let holdTimer: ReturnType<typeof setTimeout> | undefined;
   let tapTimer: ReturnType<typeof setTimeout> | undefined;
-  let lastTap: { x: number; y: number; side: boolean; time: number } | undefined;
+  let lastTap: { x: number; y: number; zone: Zone; time: number } | undefined;
   let suppressClickUntil = 0;
   let active: {
-    id: number; x: number; y: number; right: boolean;
-    time: number; volume: number; brightness: number; rate: number;
+    id: number; x: number; y: number; zone: Zone;
+    time: number; volume: number; rate: number;
     direction?: 'horizontal' | 'vertical'; held: boolean;
   } | undefined;
 
@@ -60,10 +60,13 @@ export function attachGestures(art: Artplayer, options: GestureOptions = {}) {
     const rect = video.getBoundingClientRect();
     active = {
       id: touch.identifier, x: touch.clientX, y: touch.clientY,
-      right: art.isRotate
-        ? touch.clientY >= rect.top + rect.height / 2
-        : touch.clientX >= rect.left + rect.width / 2,
-      time: art.currentTime, volume: art.volume, brightness,
+      zone: (() => {
+        const ratio = art.isRotate
+          ? (touch.clientY - rect.top) / rect.height
+          : (touch.clientX - rect.left) / rect.width;
+        return ratio < 1 / 3 ? 'left' : ratio > 2 / 3 ? 'right' : 'center';
+      })(),
+      time: art.currentTime, volume: art.volume,
       rate: art.playbackRate, held: false,
     };
     suppressClickUntil = Date.now() + 1000;
@@ -102,17 +105,13 @@ export function attachGestures(art: Artplayer, options: GestureOptions = {}) {
     } else {
       const height = (art.isRotate ? rect.width : rect.height) || 1;
       const delta = -dy / (height * 0.8);
-      if (active.right) {
+      if (active.zone === 'right') {
         const target = clamp(active.volume + delta, 0, 1);
         art.volume = target;
         if (target > 0) art.muted = false;
         art.notice.show = Math.abs(video.volume - target) > 0.02
           ? '此浏览器限制网页音量，请使用设备音量键'
           : `音量 ${Math.round(video.volume * 100)}%`;
-      } else {
-        brightness = clamp(active.brightness + delta, 0.2, 1.5);
-        video.style.filter = `${originalFilter} brightness(${brightness})`.trim();
-        art.notice.show = `画面亮度 ${Math.round(brightness * 100)}%`;
       }
     }
   };
@@ -126,17 +125,20 @@ export function attachGestures(art: Artplayer, options: GestureOptions = {}) {
     active = undefined;
     if (ended.direction || ended.held || art.isLock) { clearTap(); return; }
     const now = Date.now();
-    if (lastTap && now - lastTap.time < 300 && lastTap.side === ended.right &&
+    if (lastTap && now - lastTap.time < 300 && lastTap.zone === ended.zone &&
       Math.hypot(lastTap.x - ended.x, lastTap.y - ended.y) < 80) {
       clearTap();
-      if (!art.option.isLive) {
+      if (ended.zone === 'center') {
+        art.toggle();
+        art.notice.show = art.playing ? '继续播放' : '已暂停';
+      } else if (!art.option.isLive) {
         const before = art.currentTime;
-        seek(before + (ended.right ? seekSeconds : -seekSeconds));
-        art.notice.show = `${ended.right ? '快进' : '快退'} ${Math.abs(Math.round(art.currentTime - before))} 秒`;
+        seek(before + (ended.zone === 'right' ? seekSeconds : -seekSeconds));
+        art.notice.show = `${ended.zone === 'right' ? '快进' : '快退'} ${Math.abs(Math.round(art.currentTime - before))} 秒`;
       }
     } else {
       clearTimeout(tapTimer);
-      lastTap = { x: ended.x, y: ended.y, side: ended.right, time: now };
+      lastTap = { x: ended.x, y: ended.y, zone: ended.zone, time: now };
       tapTimer = setTimeout(() => {
         lastTap = undefined;
         if (!art.isLock && !art.isDestroy) art.controls.toggle();
@@ -161,7 +163,6 @@ export function attachGestures(art: Artplayer, options: GestureOptions = {}) {
   art.on('lock', cancel);
   return () => {
     cancel();
-    video.style.filter = originalFilter;
     video.style.touchAction = originalTouchAction;
     root.removeEventListener('touchstart', start, true);
     root.removeEventListener('touchmove', move, true);

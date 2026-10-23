@@ -125,7 +125,7 @@ export function VodPlayerSelector({
         </details>
       ) : (
         <p className='text-xs text-gray-500 dark:text-gray-400'>
-          支持投屏、双击快进/快退、长按加速、滑动调节音量和画面亮度；保留观看进度、自动连播与片头片尾设置。
+          左侧双击快退、中间双击暂停/继续、右侧双击快进；长按加速，右侧上下滑动调音量，设置中也可手动调节。支持投屏与观看进度、自动连播、片头片尾设置。
         </p>
       )}
     </div>

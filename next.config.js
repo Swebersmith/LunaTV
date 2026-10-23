@@ -80,6 +80,7 @@ const withPWA = require('next-pwa')({
     {
       urlPattern: ({ url }) =>
         url.pathname.startsWith('/api/live/') ||
+        url.pathname.startsWith('/api/player/') ||
         url.pathname.startsWith('/api/proxy/'),
       handler: 'NetworkOnly',
     },

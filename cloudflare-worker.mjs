@@ -2,6 +2,9 @@
 import handler from './.open-next/worker.js';
 import { createWorker } from './cloudflare/worker.mjs';
 import { handleLiveProxy } from './src/lib/live-worker.ts';
+import { handlePlayerMedia } from './src/lib/player-media.ts';
 
 export * from './.open-next/worker.js';
-export default createWorker(handler, handleLiveProxy);
+export default createWorker(handler, async (request, env) =>
+  (await handlePlayerMedia(request, env)) || handleLiveProxy(request, env)
+);

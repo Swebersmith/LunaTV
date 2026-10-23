@@ -23,6 +23,7 @@ import {
   saveSkipConfig,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
+import { prepareCastSource, preparePlayerSource } from '@/lib/player-source';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 import { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from '@/lib/vod-playback';
@@ -440,7 +441,7 @@ function PlayPageClient() {
   };
 
   const ensureVideoSource = (video: HTMLVideoElement | null, url: string) => {
-    if (!video || !url) return;
+    if (!video || !url || video.vodNativePending) return;
     const sources = Array.from(video.getElementsByTagName('source'));
     const existed = sources.some((s) => s.src === url);
     if (!existed) {
@@ -499,6 +500,7 @@ function PlayPageClient() {
         }
 
         // 销毁 ArtPlayer 实例
+        delete artPlayerRef.current.video.vodNativeRequest;
         artPlayerRef.current.destroy();
         artPlayerRef.current = null;
 
@@ -1345,6 +1347,11 @@ function PlayPageClient() {
                     ? `已过滤 ${removedSeconds.toFixed(1)} 秒`
                     : result.reason === 'unsupported' ? '已开启 · 当前片源暂不支持' : '已开启 · 未命中广告规则',
                 });
+              },
+              (url) => preparePlayerSource(url, true),
+              () => {
+                setIsVideoLoading(false);
+                if (artPlayerRef.current) artPlayerRef.current.notice.show = '去广告清单加载失败，请重试或关闭去广告后播放。';
               }
             );
             ensureVideoSource(video, url);
@@ -1379,9 +1386,8 @@ function PlayPageClient() {
           {
             name: 'blockAds',
             html: '去广告',
-            tooltip: !Hls.isSupported() ? '原生播放模式不支持分片过滤' : blockAdEnabled ? '已开启 · 分片过滤' : '已关闭',
+            tooltip: blockAdEnabled ? '已开启 · 分片过滤' : '已关闭',
             onClick() {
-              if (!Hls.isSupported()) return '原生播放模式不支持分片过滤';
               const enabled = !blockAdEnabledRef.current;
               try {
                 localStorage.setItem('enable_blockad', String(enabled));
@@ -1477,6 +1483,7 @@ function PlayPageClient() {
         ],
       }, {
         casting: {
+          prepareSource: (source) => prepareCastSource(source, blockAdEnabledRef.current),
           getSource: () => ({
             url: artPlayerRef.current?.option.url || videoUrl,
             title: `${videoTitleRef.current} - 第${currentEpisodeIndexRef.current + 1}集`,

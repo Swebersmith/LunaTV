@@ -118,6 +118,8 @@ function handleAuthFailure(
 
 // 判断是否需要跳过认证的路径
 function shouldSkipAuth(pathname: string): boolean {
+  // TVs authenticate this exact media endpoint with a signed, expiring URL.
+  if (pathname === '/api/player/media') return true;
   const skipPaths = [
     '/_next',
     '/favicon.ico',

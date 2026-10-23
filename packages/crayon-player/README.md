@@ -14,11 +14,11 @@ npm run dev
 ## 功能
 
 - MP4 / HLS、自定义控制栏与设置、0.5–3 倍速、画中画、网页全屏、系统全屏、自动横屏、锁屏和播放时保持屏幕常亮（平台支持时）。
-- 双击右侧快进 10 秒，双击左侧快退 10 秒；长按 500ms 临时至少 2 倍速，松手恢复原速度。
-- 右侧上下滑动调节音量，左侧上下滑动调节视频画面亮度（20%–150%）；横向滑动调节进度；单击显隐控制栏。播放按钮控制暂停/继续，鼠标行为沿用 ArtPlayer。
+- 画面分为三等份：双击左侧快退 10 秒、中间暂停/继续、右侧快进 10 秒；长按 500ms 临时至少 2 倍速，松手恢复原速度。首次触屏播放显示操作提示。
+- 右侧上下滑动调节音量；设置 → 音量可打开手动滑块。横向滑动调节进度，单击显隐控制栏，设置面板与控制栏同步收起。已移除亮度手势。
 - 锁屏、双指操作、触摸取消、失焦和换源会取消手势并恢复临时速度；手势不接管进度条和控制按钮。
-- AirPlay / 系统远程播放、Chromecast 选择入口。Google Cast SDK 预加载，点击时直接调用设备选择；发送原始 HTTP(S) 片源及原片时间轴进度，成功后暂停本地。切源/销毁期间未完成的会话请求不会加载旧片源。
-- HLS 广告分片过滤、AES-128 隐式 IV 修复、原片/过滤后时间轴转换；复杂/直播清单保守透传。原生 Safari HLS 不支持本地分片过滤。
+- AirPlay / 系统远程播放、Chromecast 选择入口。Google Cast SDK 预加载，点击时直接调用设备选择；配置清单适配后发送过滤后的 HTTP(S) 清单，并将原片进度换算为接收端时间；成功后暂停本地。切源/销毁期间未完成的会话请求不会加载旧片源。
+- HLS 广告分片过滤、AES-128 隐式 IV 修复、原片/过滤后时间轴转换；复杂/直播清单保守透传。原生 Safari HLS 可通过 `prepareMedia` 使用服务端过滤清单。
 - 按影片独立的断点续播、片头片尾设置、下一集回调、进度回调。网站原有收藏、换源、影视目录与外部巨量播放器继续由网站管理。
 
 ## 嵌入
@@ -70,9 +70,9 @@ new Artplayer({
 
 ## 设备与片源限制
 
-网页无法修改系统亮度。iOS 等平台可能限制程序音量，界面会提示使用设备音量键。系统原生视频全屏由系统接管，使用网页全屏可保留网页手势。
+iOS 等平台可能限制程序音量，界面会提示使用设备音量键。系统原生视频全屏由系统接管，使用网页全屏可保留网页手势。
 
-投屏需要设备/浏览器支持并在同一网络。电视必须能直接访问原始片源及分片、密钥，依赖网站 Cookie、Referer、自定义请求头、私有代理或设备不支持的编码可能失败。投屏播放原片源，不继承本地去广告、网页亮度和片头片尾自动跳过；Chromecast 使用其原生控制界面控制/停止，不同步电视播放进度回网站，不自动向电视推送下一集。SDK 不可达会显示提示，本地播放仍可使用。投屏无法承诺兼容所有 DLNA 电视。
+投屏需要设备/浏览器支持并在同一网络。电视必须能直接访问原始片源及分片、密钥，依赖网站 Cookie、Referer、自定义请求头、私有代理或设备不支持的编码可能失败。配置 `prepareMedia` 或 `casting.prepareSource` 可让原生 HLS、AirPlay 和 Chromecast 使用服务端已过滤的清单，并换算投屏进度；仅浏览器内的 blob 清单无法供电视读取。接入网站已提供带签名的服务端清单与分片转发。未配置服务端适配时仍使用原片源。投屏不继承片头片尾自动跳过；Chromecast 使用其原生控制界面控制/停止，不同步电视播放进度回网站，不自动向电视推送下一集。SDK 不可达会显示提示，本地播放仍可使用。投屏无法承诺兼容所有 DLNA 电视。
 
 实现参考 [Google Cast Web Sender 官方文档](https://developers.google.com/cast/docs/web_sender/integrate)、[Remote Playback API](https://developer.mozilla.org/en-US/docs/Web/API/RemotePlayback/prompt) 和 [Apple 播放设备选择接口](https://developer.apple.com/documentation/webkitjs/htmlmediaelement/1632172-webkitshowplaybacktargetpicker)。
 
@@ -89,3 +89,7 @@ npm run check
 网站使用 `packages/crayon-player/src` 中的相同源文件。修改独立仓库后，在网站目录运行 `node scripts/sync-crayon-player.mjs` 同步，避免网站和独立包行为分叉。
 
 沿用原项目 CC BY-NC-SA 4.0，详见 [LICENSE](LICENSE) 和 [NOTICE.md](NOTICE.md)。
+
+## 服务端清单适配
+
+`prepareMedia(url, blockAds)` 返回 `{ url, type, filter }`，其中 `url` 为接收端可访问的 HTTP(S) 清单，`filter` 使用导出的 `VodAdFilterResult` 结构。主站的 `/api/player/prepare` 在登录验证后签发有有效期、绑定具体资源的链接；电视不需要网站 Cookie。清单、分片与密钥带 CORS，二进制分片流式返回；多轨/复杂清单仍采用保守透传，避免音画错位。参考 [Google Cast 对自适应流 CORS 的要求](https://developers.google.com/cast/docs/web_sender/advanced)。

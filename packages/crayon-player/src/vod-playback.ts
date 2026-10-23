@@ -11,6 +11,8 @@ declare global {
   interface HTMLVideoElement {
     hls?: Hls;
     vodAdFilter?: VodAdFilterResult;
+    vodNativeRequest?: object;
+    vodNativePending?: boolean;
   }
 }
 
@@ -19,14 +21,33 @@ export function attachVodHls(
   url: string,
   onUnsupported: () => void,
   blockAds = true,
-  onAdFilter?: (result: VodAdFilterResult) => void
+  onAdFilter?: (result: VodAdFilterResult) => void,
+  prepareNative?: (url: string) => Promise<{ url: string; filter: VodAdFilterResult }>,
+  onNativeError?: () => void
 ): Hls | null {
   video.hls?.destroy();
   delete video.hls;
   delete video.vodAdFilter;
+  const nativeRequest = {};
+  video.vodNativeRequest = nativeRequest;
+  video.vodNativePending = false;
 
   if (!Hls.isSupported()) {
-    if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = url;
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      if (blockAds && prepareNative) {
+        video.vodNativePending = true;
+        void prepareNative(url).then(prepared => {
+          if (video.vodNativeRequest !== nativeRequest) return;
+          video.vodNativePending = false;
+          video.vodAdFilter = prepared.filter;
+          video.querySelectorAll('source').forEach(source => { source.src = prepared.url; });
+          video.src = prepared.url;
+          onAdFilter?.(prepared.filter);
+        }).catch(() => {
+          if (video.vodNativeRequest === nativeRequest) { video.vodNativePending = false; onNativeError?.(); }
+        });
+      } else video.src = url;
+    }
     else onUnsupported();
     return null;
   }

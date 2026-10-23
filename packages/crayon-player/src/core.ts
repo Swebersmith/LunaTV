@@ -1,6 +1,7 @@
 import Artplayer from 'artplayer';
 
 import { crayonPlayerPlugin, EnhancementOptions } from './plugin';
+import { volumeSetting } from './player-ui';
 
 export type CrayonPlayerCoreOptions = ConstructorParameters<typeof Artplayer>[0];
 
@@ -16,6 +17,7 @@ export function createCrayonPlayerCore(
     ...options,
     gesture: false,
     fastForward: false,
+    settings: [volumeSetting(), ...(options.settings || [])],
     plugins: [...(options.plugins || []), crayonPlayerPlugin(enhancements)],
   });
   art.template?.$player?.setAttribute('data-player', 'crayon-player');
