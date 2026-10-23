@@ -442,6 +442,9 @@ function PlayPageClient() {
 
   const ensureVideoSource = (video: HTMLVideoElement | null, url: string) => {
     if (!video || !url || video.vodNativePending) return;
+    // HLS attachment owns its filtered/native alternatives. It runs asynchronously;
+    // adding a raw source here can replace an MMS blob before/after preparation.
+    if (/\.m3u8(?:[?#]|$)/i.test(url)) return;
     const sources = Array.from(video.getElementsByTagName('source'));
     const existed = sources.some((s) => s.src === url);
     if (!existed) {

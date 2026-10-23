@@ -12,7 +12,9 @@ declare global {
     hls?: Hls;
     vodAdFilter?: VodAdFilterResult;
     vodNativeRequest?: object;
+    /** Preparation blocks every playback path, including MSE and native alternatives. */
     vodNativePending?: boolean;
+    vodPlaybackUrl?: string;
   }
 }
 
@@ -22,37 +24,32 @@ export function attachVodHls(
   onUnsupported: () => void,
   blockAds = true,
   onAdFilter?: (result: VodAdFilterResult) => void,
-  prepareNative?: (url: string) => Promise<{ url: string; filter: VodAdFilterResult }>,
-  onNativeError?: () => void
+  prepareSource?: (url: string) => Promise<{ url: string; filter: VodAdFilterResult }>,
+  onPreparationError?: () => void
 ): Hls | null {
   video.hls?.destroy();
   delete video.hls;
   delete video.vodAdFilter;
-  const nativeRequest = {};
-  video.vodNativeRequest = nativeRequest;
+  delete video.vodPlaybackUrl;
+  // Remove the previous native source and its buffered media before async preparation.
+  const hadSource = video.hasAttribute('src') || !!video.querySelector('source');
+  video.removeAttribute('src');
+  video.querySelectorAll('source').forEach(source => source.remove());
+  if (hadSource) video.load();
+  const request = {};
+  video.vodNativeRequest = request;
   video.vodNativePending = false;
-
-  if (!Hls.isSupported()) {
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      if (blockAds && prepareNative) {
-        video.vodNativePending = true;
-        void prepareNative(url).then(prepared => {
-          if (video.vodNativeRequest !== nativeRequest) return;
-          video.vodNativePending = false;
-          video.vodAdFilter = prepared.filter;
-          video.querySelectorAll('source').forEach(source => { source.src = prepared.url; });
-          video.src = prepared.url;
-          onAdFilter?.(prepared.filter);
-        }).catch(() => {
-          if (video.vodNativeRequest === nativeRequest) { video.vodNativePending = false; onNativeError?.(); }
-        });
-      } else video.src = url;
-    }
-    else onUnsupported();
+  const mse = Hls.isSupported();
+  const native = !!video.canPlayType('application/vnd.apple.mpegurl');
+  // iPad may support BOTH MSE/MMS and native HLS. A prepared HTTP playlist is
+  // already filtered, so native playback can use it without a second JS engine.
+  const useNative = native && (!mse || !!prepareSource);
+  if (!mse && !native) {
+    onUnsupported();
     return null;
   }
-
-  const hls = new Hls({
+  const preparedPlayback = blockAds && !!prepareSource;
+  const hls = useNative ? null : new Hls({
     debug: false,
     enableWorker: true,
     lowLatencyMode: false,
@@ -63,7 +60,7 @@ export function attachVodHls(
     maxBufferSize: 60 * 1000 * 1000,
     maxBufferHole: 0.3,
     // Filter actual ad segment groups while preserving retained HLS state.
-    loader: blockAds
+    loader: blockAds && !preparedPlayback
       ? vodAdLoader(Hls.DefaultConfig.loader, (result) => {
           if (video.hls !== hls) return;
           video.vodAdFilter = result;
@@ -71,10 +68,58 @@ export function attachVodHls(
         })
       : Hls.DefaultConfig.loader,
   });
-  video.hls = hls;
-  hls.loadSource(url);
-  hls.attachMedia(video);
+  if (hls) {
+    video.hls = hls;
+    hls.on(Hls.Events.DESTROYING, () => {
+      if (video.hls === hls) delete video.hls;
+      if (video.vodNativeRequest === request) {
+        delete video.vodNativeRequest;
+        video.vodNativePending = false;
+      }
+    });
+  }
+  const load = (playbackUrl: string, filter?: VodAdFilterResult) => {
+    if (video.vodNativeRequest !== request || hls && video.hls !== hls) return;
+    video.vodNativePending = false;
+    video.vodPlaybackUrl = playbackUrl;
+    if (filter) video.vodAdFilter = filter;
+    if (hls) {
+      hls.loadSource(playbackUrl);
+      hls.attachMedia(video);
+      // A raw fallback would bypass client-side filtering in standalone mode.
+      if (preparedPlayback || !blockAds) setHlsAlternative(video, playbackUrl);
+    } else {
+      setHlsAlternative(video, playbackUrl);
+      video.src = playbackUrl;
+    }
+    if (filter) onAdFilter?.(filter);
+  };
+  if (preparedPlayback && prepareSource) {
+    video.vodNativePending = true;
+    const failed = () => {
+      if (video.vodNativeRequest !== request) return;
+      video.vodNativePending = false;
+      // Do not silently recover using the unfiltered original.
+      onPreparationError?.();
+    };
+    try {
+      void prepareSource(url).then(prepared => load(prepared.url, prepared.filter)).catch(failed);
+    } catch { failed(); }
+  } else load(url);
   return hls;
+}
+
+/** Keep HLS.js's MMS blob source; only replace the HTTP alternative. */
+export function setHlsAlternative(video: HTMLVideoElement, url: string) {
+  video.querySelectorAll('source').forEach(source => {
+    if (!source.src.startsWith('blob:')) source.remove();
+  });
+  const source = document.createElement('source');
+  source.src = url;
+  source.type = 'application/vnd.apple.mpegurl';
+  video.appendChild(source);
+  video.disableRemotePlayback = false;
+  video.removeAttribute('disableRemotePlayback');
 }
 
 export function vodSourceTime(

@@ -1,4 +1,6 @@
 import type Artplayer from 'artplayer';
+
+import { setHlsAlternative } from './vod-playback';
 import type { VodAdFilterResult } from './vod-segment-filter';
 
 export interface CastSource { url: string; title?: string; type?: string; currentTime?: number }
@@ -134,8 +136,11 @@ export function attachCasting(art: Artplayer, options: CastOptions) {
         }
         const time = source.media.mapTime?.(source.original.currentTime ?? art.currentTime) ?? source.original.currentTime ?? art.currentTime;
         video.hls?.destroy(); delete video.hls;
+        delete video.vodNativeRequest;
+        video.vodNativePending = false;
+        video.vodPlaybackUrl = source.media.url;
         video.vodAdFilter = source.media.filter;
-        video.querySelectorAll('source').forEach(item => { item.src = source.media.url; });
+        setHlsAlternative(video, source.media.url);
         video.src = source.media.url;
         const restore = () => {
           nativeRestores.delete(restore);
@@ -175,7 +180,7 @@ export function attachCasting(art: Artplayer, options: CastOptions) {
     });
     const stamp = generation;
     busy = true;
-    castButton!.disabled = true;
+    if (castButton) castButton.disabled = true;
     // requestSession is invoked in the click stack, preserving user activation.
     void context.requestSession().then(async () => {
       if (disposed || stamp !== generation || options.getSource().url !== source.url) return;

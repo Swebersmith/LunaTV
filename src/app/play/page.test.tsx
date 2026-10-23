@@ -22,6 +22,7 @@ class MockArt {
   playbackRate = 1;
   paused = true;
   notice = { show: '' };
+  setting = { update: jest.fn() };
   destroy = jest.fn();
   events: Record<string, (() => void)[]> = {};
   on = (event: string, handler: () => void) => {
@@ -36,6 +37,7 @@ class MockArt {
       gesture?: boolean;
       fastForward?: boolean;
       plugins?: unknown[];
+      customType?: Record<string, (video: HTMLVideoElement, url: string) => void>;
     }
   ) {
     mockArtInstances.push(this);
@@ -129,6 +131,27 @@ it('embeds Crayon Player with enhanced touch/casting and keeps the saved built-i
     plugins: [expect.any(Function)],
     settings: expect.arrayContaining([expect.objectContaining({ name: 'blockAds' })]),
   }));
+});
+
+it('never injects raw HLS alternatives before iPad native preparation completes', async () => {
+  const defaultFetch = global.fetch;
+  const filter = {playlist:'', originalDuration:100, removed:[{start:30,end:40}], reason:'filtered'};
+  const prepared = {url:'https://tv.example/api/player/media?token=clean',filter};
+  global.fetch = jest.fn(async (input, init) => String(input) === '/api/player/prepare'
+    ? {ok:true,json:async():Promise<typeof prepared>=>prepared}
+    : defaultFetch(input,init)) as jest.Mock;
+  jest.spyOn(HTMLMediaElement.prototype,'canPlayType').mockReturnValue('probably');
+  await openPage();
+  const player = mockArtInstances[0];
+  expect(player.video.querySelector('source')).toBeNull();
+  expect(player.video.hasAttribute('src')).toBe(false);
+  const hlsType = player.options?.customType?.m3u8;
+  if (!hlsType) throw new Error('Missing HLS playback configuration');
+  await act(async () => { hlsType(player.video, firstUrl); });
+  expect(player.video.src).toBe('https://tv.example/api/player/media?token=clean');
+  expect(Array.from(player.video.querySelectorAll('source')).map(source=>source.src)).toEqual([player.video.src]);
+  expect(player.setting.update).toHaveBeenCalledWith({name:'blockAds',tooltip:'已过滤 10.0 秒'});
+  expect(global.fetch).toHaveBeenCalledWith('/api/player/prepare',expect.objectContaining({method:'POST',credentials:'same-origin'}));
 });
 
 it('releases HLS and pending auto-next when switching, then restores only the built-in position', async () => {

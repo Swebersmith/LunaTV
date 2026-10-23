@@ -7,18 +7,18 @@ import { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from 
 import type { VodAdFilterResult } from './vod-segment-filter';
 import { sourceToFilteredTime } from './vod-segment-filter';
 
-export { attachGestures } from './gestures';
-export type { GestureOptions } from './gestures';
-export { attachCasting, prepareCastSdk } from './casting';
 export type { CastOptions, CastSource, PreparedCastSource } from './casting';
-export { crayonPlayerPlugin } from './plugin';
-export { createCrayonPlayerCore } from './core';
+export { attachCasting, prepareCastSdk } from './casting';
 export type { CrayonPlayerCoreOptions } from './core';
+export { createCrayonPlayerCore } from './core';
+export type { GestureOptions } from './gestures';
+export { attachGestures } from './gestures';
 export type { EnhancementOptions } from './plugin';
-export { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from './vod-playback';
+export { crayonPlayerPlugin } from './plugin';
 export { filterAdsFromM3U8, vodAdLoader } from './vod-ad-filter';
-export { filterVodAdSegments } from './vod-segment-filter';
+export { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from './vod-playback';
 export type { VodAdFilterResult, VodAdRange } from './vod-segment-filter';
+export { filterVodAdSegments } from './vod-segment-filter';
 
 type ArtOptions = ConstructorParameters<typeof Artplayer>[0];
 export interface CrayonPlayerOptions {
@@ -40,9 +40,11 @@ export interface CrayonPlayerOptions {
 
 /** Standalone VOD player. Host applications can also install just crayonPlayerPlugin. */
 export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
+  // eslint-disable-next-line prefer-const -- Callbacks are declared before construction and close over this binding.
   let art: Artplayer;
   let destroyed = false;
   let blocked = options.blockAds !== false;
+  const prepareMedia = options.prepareMedia;
   let resume: number | undefined;
   let lastSave = 0;
   let advanced = false;
@@ -59,12 +61,7 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
   } catch { /* Storage is optional in private browsing. */ }
   const sourceUrl = () => art?.option.url || options.url;
   const hlsType = (video: HTMLVideoElement, url: string) => {
-    // Keep an original source for Safari/AirPlay alongside HLS.js's MediaSource URL.
-    video.querySelectorAll('source').forEach(source => source.remove());
-    const source = document.createElement('source');
-    source.src = url;
-    source.type = 'application/vnd.apple.mpegurl';
-    if (!(blocked && options.prepareMedia && !Hls.isSupported())) video.appendChild(source);
+    // attachVodHls owns both the engine and its native/AirPlay alternative.
     const hls = attachVodHls(video, url, () => {
       queueMicrotask(() => { if (!destroyed) art.notice.show = '此浏览器不支持 HLS 播放'; });
     }, blocked,
@@ -72,7 +69,7 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
         const seconds = result.removed.reduce((sum, range) => sum + range.end - range.start, 0);
         art.setting.update({ name: 'blockAds', tooltip: seconds ? `已过滤 ${seconds.toFixed(1)} 秒` : '已开启 · 未命中或暂不支持' });
       },
-      options.prepareMedia ? url => options.prepareMedia!(url,blocked) : undefined,
+      prepareMedia ? url => prepareMedia(url,blocked) : undefined,
       () => { art.notice.show = '去广告清单加载失败，请重试或关闭去广告'; });
     hls?.on(Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal || destroyed) return;
@@ -99,7 +96,7 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
     customType: { m3u8: hlsType, ...options.artplayer?.customType },
     settings: [
       { name: 'blockAds', html: '去广告', tooltip: blocked ? '已开启' : '已关闭', onClick() {
-        if (!Hls.isSupported() && !options.prepareMedia) return '原生播放需要配置去广告服务';
+        if (!Hls.isSupported() && !prepareMedia) return '原生播放需要配置去广告服务';
         resume = vodSourceTime(art.video);
         blocked = !blocked;
         recoveryCount = 0;
@@ -120,8 +117,8 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
     ...options.enhancements,
     casting: options.enhancements?.casting === false ? false : {
       getSource: () => ({ url: sourceUrl(), title: art.title, currentTime: vodSourceTime(art.video) }),
-      ...(options.prepareMedia ? { prepareSource: async (source: { url: string; title?: string }) => {
-        const prepared = await options.prepareMedia!(source.url,blocked);
+      ...(prepareMedia ? { prepareSource: async (source: { url: string; title?: string }) => {
+        const prepared = await prepareMedia(source.url,blocked);
         return { ...source,...prepared, mapTime: (time: number) => sourceToFilteredTime(prepared.filter.removed,time) };
       } } : {}),
       ...options.enhancements?.casting,

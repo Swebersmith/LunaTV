@@ -31,6 +31,14 @@ it('serves filtered playlists and signed segment bytes in real workerd without c
     expect(media.status).toBe(200);
     expect(Number(media.headers.get('X-Crayon-Ad-Seconds'))).toBeCloseTo(26.04);
     const playlist = await media.text();
+    const duration = (content:string) => Array.from(content.matchAll(/#EXTINF:([\d.]+)/g)).reduce((sum,match)=>sum+Number(match[1]),0);
+    expect(duration(fixture)-duration(playlist)).toBeCloseTo(26.04);
+    expect(prepared.filter.originalDuration).toBeCloseTo(duration(fixture));
+    const targets = playlist.split('\n').filter((line:string)=>line.startsWith('https://')).map((line:string)=>{
+      const token = new URL(line).searchParams.get('token') || '';
+      return JSON.parse(Buffer.from(token.split('.')[0],'base64url').toString('utf8')).u as string;
+    });
+    expect(targets.every((target:string)=>!target.includes('/adjump/'))).toBe(true);
     const segment = playlist.split('\n').find((line:string)=>line.startsWith('https://')) || '';
     const bytes = await runtime.dispatchFetch(segment,{headers:{Range:'bytes=0-2'}});
     expect(bytes.status).toBe(206);

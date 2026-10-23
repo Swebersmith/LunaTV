@@ -19,7 +19,7 @@ npm run dev
 - 设置 → 迷你进度条，可在控制栏隐藏时保留视频底边的细进度条，默认关闭，自动记住选择。
 - 锁屏、双指操作、触摸取消、失焦和换源会取消拖动与手势并恢复临时速度，控制按钮保持独立操作。
 - AirPlay / 系统远程播放、Chromecast 选择入口。Google Cast SDK 预加载，点击时直接调用设备选择；配置清单适配后发送过滤后的 HTTP(S) 清单，并将原片进度换算为接收端时间；成功后暂停本地。切源/销毁期间未完成的会话请求不会加载旧片源。
-- HLS 广告分片过滤、AES-128 隐式 IV 修复、原片/过滤后时间轴转换；复杂/直播清单保守透传。原生 Safari HLS 可通过 `prepareMedia` 使用服务端过滤清单。
+- HLS 广告分片过滤、AES-128 隐式 IV 修复、原片/过滤后时间轴转换；复杂/直播清单保守透传。配置 `prepareMedia` 后，原生 HLS、HLS.js 及 AirPlay 备用源统一使用服务端过滤清单；支持原生 HLS 的设备优先原生播放，即使它同时支持 MSE/MMS。准备失败时提示重试，不回退到含广告的原始清单。
 - 按影片独立的断点续播、片头片尾设置、下一集回调、进度回调。网站原有收藏、换源、影视目录与外部巨量播放器继续由网站管理。
 
 ## 嵌入
@@ -93,4 +93,4 @@ npm run check
 
 ## 服务端清单适配
 
-`prepareMedia(url, blockAds)` 返回 `{ url, type, filter }`，其中 `url` 为接收端可访问的 HTTP(S) 清单，`filter` 使用导出的 `VodAdFilterResult` 结构。主站的 `/api/player/prepare` 在登录验证后签发有有效期、绑定具体资源的链接；电视不需要网站 Cookie。清单、分片与密钥带 CORS，二进制分片流式返回；多轨/复杂清单仍采用保守透传，避免音画错位。参考 [Google Cast 对自适应流 CORS 的要求](https://developers.google.com/cast/docs/web_sender/advanced)。
+`prepareMedia(url, blockAds)` 返回 `{ url, type, filter }`，其中 `url` 为接收端可访问的 HTTP(S) 清单，`filter` 使用导出的 `VodAdFilterResult` 结构。配置后，开启去广告的所有 HLS 播放路径会等待准备完成再加载同一过滤清单，HLS.js 不再重复过滤；原片时间换算仍使用服务端返回的元数据。更新 HTTP 备用源时保留 MMS 的 blob source。主站的 `/api/player/prepare` 在登录验证后签发有有效期、绑定具体资源的链接；电视不需要网站 Cookie。清单、分片与密钥带 CORS，二进制分片流式返回；多轨/复杂清单仍采用保守透传，避免音画错位。此方案兼容支持相应 HLS/编码的设备，不能移除已压入正片画面的广告，也不保证识别所有片源的插播规则。参考 [WebKit 的 MSE / AirPlay 片源说明](https://webkit.org/blog/15036/how-to-use-media-source-extensions-with-airplay/) 和 [Google Cast 对自适应流 CORS 的要求](https://developers.google.com/cast/docs/web_sender/advanced)。
