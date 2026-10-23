@@ -2,17 +2,20 @@ import Artplayer from 'artplayer';
 import Hls from 'hls.js';
 
 import { createCrayonPlayerCore } from './core';
+import { createMediaPreparer, MediaPreparer } from './media-client';
 import { EnhancementOptions } from './plugin';
 import { attachVodHls, vodFilteredTime, vodSourceDuration, vodSourceTime } from './vod-playback';
-import type { VodAdFilterResult } from './vod-segment-filter';
 import { sourceToFilteredTime } from './vod-segment-filter';
 
 export type { CastOptions, CastSource, PreparedCastSource } from './casting';
 export { attachCasting, prepareCastSdk } from './casting';
 export type { CrayonPlayerCoreOptions } from './core';
+export type { CrayonPlayerCoreOptions as PlayerOptions } from './core';
 export { createCrayonPlayerCore } from './core';
 export type { GestureOptions } from './gestures';
 export { attachGestures } from './gestures';
+export type { MediaPreparer, PreparedMedia } from './media-client';
+export { createMediaPreparer } from './media-client';
 export type { EnhancementOptions } from './plugin';
 export { crayonPlayerPlugin } from './plugin';
 export { filterAdsFromM3U8, vodAdLoader } from './vod-ad-filter';
@@ -34,8 +37,11 @@ export interface CrayonPlayerOptions {
   onNext?: () => void;
   onProgress?: (sourceTime: number, sourceDuration: number) => void;
   enhancements?: EnhancementOptions;
+  /** Advanced playback settings; supplied container and URL remain authoritative. */
+  player?: Partial<ArtOptions>;
+  /** @deprecated Use player instead. */
   artplayer?: Partial<ArtOptions>;
-  prepareMedia?: (url: string, blockAds: boolean) => Promise<{ url: string; type?: string; filter: VodAdFilterResult }>;
+  prepareMedia?: string | MediaPreparer;
 }
 
 /** Standalone VOD player. Host applications can also install just crayonPlayerPlugin. */
@@ -44,7 +50,8 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
   let art: Artplayer;
   let destroyed = false;
   let blocked = options.blockAds !== false;
-  const prepareMedia = options.prepareMedia;
+  const prepareMedia = typeof options.prepareMedia === 'string' ? createMediaPreparer(options.prepareMedia) : options.prepareMedia;
+  const playerOptions = { ...options.artplayer, ...options.player };
   let resume: number | undefined;
   let lastSave = 0;
   let advanced = false;
@@ -87,13 +94,13 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
     else art.pause();
   };
   art = createCrayonPlayerCore({
-    container: options.container, url: options.url,
     poster: options.poster || '', autoplay: options.autoplay ?? false, volume: 0.7,
     pip: true, setting: true, playbackRate: true, fullscreen: true,
     fullscreenWeb: true, airplay: true, playsInline: true, lock: true,
     autoOrientation: true, theme: '#22c55e', lang: 'zh-cn',
-    ...options.artplayer,
-    customType: { m3u8: hlsType, ...options.artplayer?.customType },
+    ...playerOptions,
+    container: options.container, url: options.url, id: playerOptions.id || 'crayon-player',
+    customType: { m3u8: hlsType, ...playerOptions.customType },
     settings: [
       { name: 'blockAds', html: '去广告', tooltip: blocked ? '已开启' : '已关闭', onClick() {
         if (!Hls.isSupported() && !prepareMedia) return '原生播放需要配置去广告服务';
@@ -107,11 +114,11 @@ export function createCrayonPlayer(options: CrayonPlayerOptions): Artplayer {
       { html: '设置片头', onClick() { skip.intro = vodSourceTime(art.video); return `${Math.floor(skip.intro)} 秒`; } },
       { html: '设置片尾', onClick() { skip.outro = Math.max(0, vodSourceDuration(art.video) - vodSourceTime(art.video)); return `${Math.floor(skip.outro)} 秒`; } },
       { html: '删除跳过配置', onClick() { skip.enabled = false; skip.intro = 0; skip.outro = 0; return '已清除'; } },
-      ...(options.artplayer?.settings || []),
+      ...(playerOptions.settings || []),
     ],
     controls: [
       ...(options.onNext ? [{ name: 'nextEpisode', html: '下一集', position: 'left' as const, index: 13, click: next }] : []),
-      ...(options.artplayer?.controls || []),
+      ...(playerOptions.controls || []),
     ],
   }, {
     ...options.enhancements,

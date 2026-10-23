@@ -14,6 +14,7 @@ export function createCrayonPlayerCore(
   Artplayer.PLAYBACK_RATE = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
   Artplayer.USE_RAF = false;
   Artplayer.FULLSCREEN_WEB_IN_BODY = true;
+  Artplayer.LOG_VERSION = false;
   const art = new Artplayer({
     ...options,
     gesture: false,

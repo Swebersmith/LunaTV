@@ -1,96 +1,227 @@
 # Crayon Player
 
-Crayon Player 是支持投屏、触屏手势和 HLS 的可嵌入 TypeScript 视频播放器。可独立运行，也可接入现有视频网站，无需 React、数据库或后台服务。
+可独立部署，也可嵌入网页的 HTML5 视频播放器。支持 MP4 / HLS、投屏、触屏手势、拖动进度、断点续播、片头片尾和广告分片过滤。
 
-## 启动示例
+## 选择使用方式
+
+- **打开播放器看视频**：运行本地演示，或把 `demo-dist/` 上传到 HTTPS 静态托管。无需数据库。
+- **接入自己的网页**：安装 npm 压缩包，或直接引入 `dist/crayon-player.iife.js`；无需额外引入播放器 CSS。
+- **让 iPad 原生播放、AirPlay 和 Chromecast 也使用去广告清单**：部署配套服务，并设置 `prepareMedia`。纯静态部署无法向电视提供浏览器内部的过滤清单。
+
+仓库不包含影片目录、片源订阅、账户数据库或部署凭据。请使用自己有权访问的视频地址。去广告是对已识别 HLS 插播分片的过滤，不处理压进正片画面的广告，也不保证识别所有片源。
+
+## 安装和本地运行
+
+只需现成文件时，可在 [Releases](https://github.com/Swebersmith/CrayonPlayer/releases) 下载 `crayon-player-static-版本.tar.gz`（解压后上传静态网站）、`crayon-player-browser-版本.tar.gz`（嵌入网页的脚本与模块）或 npm `.tgz` 安装包。压缩包附带许可文件，`SHA256SUMS.txt` 可用于核对文件完整性。
+
+需要 Node.js 22 或更新版本、npm。Windows、macOS 和 Linux 使用相同 npm 命令。
 
 ```sh
+git clone https://github.com/Swebersmith/CrayonPlayer.git
+cd CrayonPlayer
 npm ci
 npm run dev
 ```
 
-打开终端输出的本地网址。`npm run build` 生成可嵌入的 CommonJS 包和类型声明；`npm run build:demo` 生成 `demo-dist/` 静态示例，可部署到任何静态托管。仓库创建不会自动发布 npm 包或上线网站。
+打开终端显示的地址，粘贴 MP4 或 M3U8 地址后点击「载入视频」。默认视频是公开测试流。私有仓库需要 GitHub 访问权限；安装不会把仓库或视频公开。
 
-## 功能
+`npm ci` 按锁文件安装依赖并准备发行文件。修改源码后运行 `npm run check`，检查类型、功能、演示构建和真实 npm 压缩包。打包检查使用系统 `tar` 命令，Windows 10/11、macOS 和常见 Linux 发行版均提供。
 
-- MP4 / HLS、自定义控制栏与设置、0.5–3 倍速、画中画、网页全屏、系统全屏、自动横屏、锁屏和播放时保持屏幕常亮（平台支持时）。
-- 画面分为三等份：双击左侧快退 10 秒、中间暂停/继续、右侧快进 10 秒；长按 500ms 临时至少 2 倍速，松手恢复原速度。首次触屏播放显示操作提示。
-- 右侧上下滑动调节音量；设置 → 音量可打开手动滑块。画面横向滑动、底部进度条触摸拖动和鼠标拖动均实时同步进度条，左上角按“当前进度 / 总时长”显示，例如 `1小时2分钟3秒 / 2小时0分钟0秒`；进度条支持方向键、Home / End。单击显隐控制栏，设置面板与控制栏同步收起。已移除亮度手势。
-- 设置 → 迷你进度条，可在控制栏隐藏时保留视频底边的细进度条，默认关闭，自动记住选择。
-- 锁屏、双指操作、触摸取消、失焦和换源会取消拖动与手势并恢复临时速度，控制按钮保持独立操作。
-- AirPlay / 系统远程播放、Chromecast 选择入口。Google Cast SDK 预加载，点击时直接调用设备选择；配置清单适配后发送过滤后的 HTTP(S) 清单，并将原片进度换算为接收端时间；成功后暂停本地。切源/销毁期间未完成的会话请求不会加载旧片源。
-- HLS 广告分片过滤、AES-128 隐式 IV 修复、原片/过滤后时间轴转换；复杂/直播清单保守透传。配置 `prepareMedia` 后，原生 HLS、HLS.js 及 AirPlay 备用源统一使用服务端过滤清单；支持原生 HLS 的设备优先原生播放，即使它同时支持 MSE/MMS。准备失败时提示重试，不回退到含广告的原始清单。
-- 按影片独立的断点续播、片头片尾设置、下一集回调、进度回调。网站原有收藏、换源、影视目录与外部巨量播放器继续由网站管理。
-
-## 嵌入
-
-先 `npm run build`，在自己的前端项目中通过本地路径安装此仓库：
+## 部署静态演示
 
 ```sh
-npm install /path/to/CrayonPlayer
+npm run build:demo
+npm run preview
+```
+
+确认预览正常后，把 **`demo-dist/` 内的全部文件** 上传到静态托管，入口为 `index.html`。构建使用相对资源路径，可放在网站子目录；不要只上传 HTML，也不要双击本地 HTML 代替 HTTP(S) 部署。
+
+此方式提供播放器、手势、设置、记录和设备支持的投屏入口。支持 HLS.js 的浏览器可在本地过滤清单；原生 HLS、系统投屏和电视端过滤需要下一节的服务。演示会显示当前部署模式。
+
+### 配套服务与页面一起部署到 Cloudflare Workers
+
+此方案把页面、签名清单、分片和密钥转发部署到同一 HTTPS 站点，不需要其他视频网站、数据库或 KV/D1。配置在 `wrangler.jsonc`，默认 Worker 名称为 `crayon-player`，首次部署前可改为自己的名称。
+
+```sh
+npx wrangler login
+npx wrangler secret put MEDIA_SECRET
+npx wrangler secret put VIEWER_PASSWORD
+npm run deploy:check
+npm run deploy
+```
+
+- `MEDIA_SECRET`：签名随机密钥，建议至少 32 字符。可在自己的终端运行 `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` 生成，再在 secret 提示中输入。不能放进前端、Git 或 `vars`。
+- `VIEWER_PASSWORD`：访问页面和准备接口的口令，建议使用长的随机英文数字口令。浏览器弹出登录框时，用户名填写 **`crayon`**，密码填写该口令。
+- `secret put` 会修改远端 Worker；先确认 Cloudflare 账户和 Worker 名称。后续更新通常只需 `npm ci` 和 `npm run deploy`，不要重设密钥，否则旧投屏链接会失效。
+- `deploy:check` 只构建并打包检查，`deploy` 才发布。Workers Builds 可使用构建命令 `npm ci && npm run build:hosted`、部署命令 `npx wrangler deploy`，并配置上述两个 secret。
+- 此模式自动启用 `prepareMedia: '/api/player/prepare'`。页面和准备接口需要登录；电视读取的媒体链接只验证签名，无需网页口令，默认有效 8 小时。请勿公开转发这些临时链接。
+- 服务会转发视频流量，平台请求量、带宽策略、CPU 和上游连通性限制仍然适用。不要把准备接口改成匿名开放代理。
+
+本地验证完整部署：在仓库根目录创建未提交的 `.dev.vars`，写入 `MEDIA_SECRET=自己的测试密钥` 和 `VIEWER_PASSWORD=自己的测试口令`，运行 `npm run dev:hosted`。改动 Worker 配置后运行 `npm run worker:types`。本地口令、生成类型和 `.wrangler/` 不进入版本库或 npm 包。
+
+依据：[Workers 静态资源路由](https://developers.cloudflare.com/workers/static-assets/routing/worker-script/)、[Wrangler 安装](https://developers.cloudflare.com/workers/wrangler/install-and-update/)、[Secrets 配置](https://developers.cloudflare.com/workers/configuration/secrets/)。
+
+## 接入自己的网页
+
+### 安装 npm 压缩包
+
+在播放器仓库运行：
+
+```sh
+npm run check
+npm pack
+```
+
+得到 `swebersmith-crayon-player-0.2.0.tgz`，在自己的前端项目安装该文件：
+
+```sh
+npm install /path/to/swebersmith-crayon-player-0.2.0.tgz
+```
+
+拥有仓库访问权限时，也可 `npm install github:Swebersmith/CrayonPlayer`，安装会自动构建。不要求该名称已发布到 npm 公共仓库，不能直接假定 `npm install @swebersmith/crayon-player` 可用。
+
+```html
+<div id="player" style="width:100%;aspect-ratio:16/9"></div>
 ```
 
 ```ts
 import { createCrayonPlayer } from '@swebersmith/crayon-player';
 
 const player = createCrayonPlayer({
-  container: '#player', // 容器需显式高度，例如 aspect-ratio: 16/9
-  url: 'https://your-media.example/movie.m3u8',
-  title: '我的视频',
-  storageKey: 'movie-123:episode-1',
-  skip: { enabled: true, intro: 60, outro: 90 }, // outro 为片尾秒数
+  container: '#player',
+  url: 'https://media.example/episode.m3u8',
+  title: '第一集',
+  storageKey: 'series-123:episode-1',
+  autoplay: false,
+  blockAds: true,
+  prepareMedia: '/api/player/prepare', // 部署同源服务后启用；纯静态接入请删掉此项
+  skip: { enabled: true, intro: 60, outro: 90 },
   onNext: () => openNextEpisode(),
-  onProgress: (time, duration) => saveProgress(time, duration),
+  onProgress: (sourceTime, sourceDuration) => saveProgress(sourceTime, sourceDuration),
+  player: { theme: '#22c55e', volume: 0.7 },
 });
-// 换集时销毁并以新的影片 storageKey 创建实例；卸载时也调用 destroy。
+
+// 卸载、换集或换播放器时销毁；下一集使用新的 storageKey 创建实例。
 player.destroy();
 ```
 
-已有 ArtPlayer 项目可以只使用插件，保留自己的 HLS、记录、片头片尾、选集等实现：
+`openNextEpisode`、`saveProgress` 由宿主实现，不需要时删掉相应配置。`outro` 表示距结尾多少秒，不是片尾开始的绝对时间。`storageKey` 必须按影片和集数区分。断点、回调和片头片尾使用原片时间轴，界面显示过滤后的实际时长。
 
-如需统一的 Crayon Player 标识和初始化入口，可调用 `createCrayonPlayerCore(artplayerOptions, enhancements)`；该入口保留传入的 HLS 加载器、设置和控制按钮，统一安装投屏与手势，用于与现有视频网站集成。
+在浏览器 DOM 已创建后初始化。在 React / Vue 等框架的挂载回调创建、卸载回调销毁；服务端渲染时不要提前创建实例。ESM、CommonJS 和类型声明均随包提供。
+
+### 直接通过 script 接入
+
+运行 `npm run build`，将 `dist/crayon-player.iife.js`、`LICENSE`、`NOTICE.md` 和 `THIRD_PARTY_LICENSES/` 放入自己的静态资源目录：
+
+```html
+<div id="player" style="width:100%;aspect-ratio:16/9"></div>
+<script src="/assets/crayon-player.iife.js"></script>
+<script>
+  const player = CrayonPlayer.createCrayonPlayer({
+    container: '#player',
+    url: 'https://media.example/episode.m3u8',
+    storageKey: 'series-123:episode-1',
+    // prepareMedia: '/api/player/prepare',
+  });
+  window.addEventListener('pagehide', () => player.destroy());
+</script>
+```
+
+浏览器全局名为 `CrayonPlayer`，无需其他脚本或 CSS。完整示例见 [examples/embed.html](examples/embed.html)。不要把 CommonJS 文件当浏览器脚本引入；直接 ESM 导入使用 `dist/crayon-player.mjs`。
+
+### 接入现有服务端
+
+`prepareMedia` 可填同源接口地址，也可提供异步函数：
 
 ```ts
-import Artplayer from 'artplayer';
-import { crayonPlayerPlugin, vodSourceTime } from '@swebersmith/crayon-player';
-
-new Artplayer({
-  container: '#player', url: mediaUrl,
-  gesture: false, fastForward: false,
-  plugins: [crayonPlayerPlugin({
-    gestures: { seekSeconds: 10, holdDelay: 500, holdRate: 2 },
-    casting: {
-      getSource: () => ({ url: currentMediaUrl, title: currentTitle,
-        currentTime: vodSourceTime(currentVideo) }),
-    },
-  })],
-});
+prepareMedia: async (url, blockAds) => {
+  const response = await fetch('/my-media/prepare', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, blockAds }),
+  });
+  if (!response.ok) throw new Error('播放清单准备失败');
+  return response.json();
+}
 ```
 
-`gestures: false` 关闭手势，`casting: false` 关闭投屏，`casting.chromecast: false` 不加载 Google SDK；配置这些参数位于工厂的 `enhancements` 中，或直接传给插件。
+返回 `{ url, type?, filter, expiresAt? }`：`url` 是接收端可访问的 HTTP(S) 地址；`filter` 为 `{ playlist, originalDuration, removed, reason }`，`removed` 为原片时间轴上的 `{ start, end }[]`，`reason` 为 `filtered`、`no-match` 或 `unsupported`。`expiresAt` 为毫秒时间戳。示例服务的 `playlist` 留空，清单由签名 URL 读取。
 
-## 设备与片源限制
+也可使用 `createMediaPreparer('/api/player/prepare')`，取得有限缓存、过期检测与失败重试的适配器。播放器与投屏共用它；开启过滤时先准备清单，失败不会静默回退原片。
 
-iOS 等平台可能限制程序音量，界面会提示使用设备音量键。系统原生视频全屏由系统接管，使用网页全屏可保留网页手势。
+服务端独立入口：
 
-投屏需要设备/浏览器支持并在同一网络。电视必须能直接访问原始片源及分片、密钥，依赖网站 Cookie、Referer、自定义请求头、私有代理或设备不支持的编码可能失败。配置 `prepareMedia` 或 `casting.prepareSource` 可让原生 HLS、AirPlay 和 Chromecast 使用服务端已过滤的清单，并换算投屏进度；仅浏览器内的 blob 清单无法供电视读取。接入网站已提供带签名的服务端清单与分片转发。未配置服务端适配时仍使用原片源。投屏不继承片头片尾自动跳过；Chromecast 使用其原生控制界面控制/停止，不同步电视播放进度回网站，不自动向电视推送下一集。SDK 不可达会显示提示，本地播放仍可使用。投屏无法承诺兼容所有 DLNA 电视。
+```ts
+import { handleMediaRelay } from '@swebersmith/crayon-player/server';
 
-实现参考 [Google Cast Web Sender 官方文档](https://developers.google.com/cast/docs/web_sender/integrate)、[Remote Playback API](https://developer.mozilla.org/en-US/docs/Web/API/RemotePlayback/prompt) 和 [Apple 播放设备选择接口](https://developer.apple.com/documentation/webkitjs/htmlmediaelement/1632172-webkitshowplaybacktargetpicker)。
+const response = await handleMediaRelay(request, {
+  secret: process.env.MEDIA_SECRET || '', // 缺少密钥时服务返回 503
+  authorize: async request => verifyYourLogin(request),
+});
+// 非 /api/player/prepare、/api/player/media 请求返回 null，交给宿主路由。
+```
 
-## 验证
+需要 Fetch API、Web Crypto 和流式响应。认证由宿主提供，密钥仅存服务端；应沿用宿主的访问频率控制。协议保留 CORS、Range、密钥状态、AES-128 IV 和原片时间映射，二进制分片不会整段读入内存。
+
+高级接入可用 `createCrayonPlayerCore(options, enhancements)` 保留自有加载器、设置和按钮，或用 `crayonPlayerPlugin`。低层插件要求关闭宿主重复的 `gesture`、`fastForward`；不要同时安装插件和工厂。推荐高级配置字段为 `player`；早期的 `artplayer` 字段仍兼容，同时传入以 `player` 为准。
+
+## 操作与默认行为
+
+- 画面三等分：左侧双击快退 10 秒，中间双击暂停/继续，右侧双击快进 10 秒；跨区域两次点击不合并为双击。
+- 长按 500ms，临时至少 2 倍速；松手、取消触摸、失焦、锁屏或换源后恢复原倍速。原来超过 2 倍不会降速。
+- 画面左右滑动、底部进度条触摸拖动和鼠标拖动均调节进度，超出边界限制在 0 与总时长之间。进度条聚焦后可用方向键、Home / End。
+- 左上角显示「当前进度 / 总时长」，如 `59秒`、`1分钟0秒`、`1小时2分钟3秒`；拖动时进度条立即同步。
+- 右侧上下滑调节音量；设置 → 音量提供手动滑块。没有亮度调节。
+- 单击显隐控制栏，设置与控制栏一起隐藏，播放中闲置约 3 秒收起；拖动期间保持可见。
+- 设置 → 迷你进度条默认关闭，开启后保留视频底边细条，并记住选择。
+- 首次触屏播放显示提示。双指操作和锁屏不触发普通手势。
+- 保留倍速、画中画、网页全屏、系统全屏、自动横屏和平台支持时的屏幕常亮。
+
+## 去广告、设备与投屏注意事项
+
+- **iPad / iPhone**：配置服务后优先原生播放过滤清单，即使设备同时支持 MSE/MMS。系统视频全屏由系统接管，网页手势、设置与迷你进度条需用网页全屏。
+- **时长**：「已过滤」对应的清单应不再有广告 URI，界面时长会缩短；记录保留原片时间，便于开关过滤后恢复。
+- **复杂格式**：多轨音频/字幕、直播、LL-HLS、字节范围、fMP4 MAP、DRM 和无法可靠解析的清单保守保留，避免音画错位或无法解密。未命中规则不等于没有广告。
+- **音量和自动播放**：部分 iOS 浏览器限制网页音量，需要设备音量键；浏览器可能要求点击播放才能出声，不能绕过系统限制。
+- **投屏条件**：设备需满足发现条件，通常在同一网络；电视需支持对应编码、HTTPS 和 HLS。Google SDK 需可访问官方域名，SDK 不可达不影响本地播放。
+- **接收端功能**：配套服务支持原生播放、AirPlay、Chromecast 的清单过滤；投屏不继承本地片头片尾跳过，不自动推送下一集，不将电视进度同步回网页。Google Cast 使用其原生控制界面，这里不提供通用 DLNA 控制器。
+- **视频地址**：使用媒体地址，不能用需登录的播放网页代替。HTTPS 页面不应加载 HTTP 片源。静态模式需要片源提供所需 CORS。依赖特殊 Cookie、Referer、地区网络或私有地址的上游不保证可用；服务不转发网站 Cookie/Authorization。
+- **升级**：覆盖整套静态文件，关闭旧播放页再打开；宿主有 Service Worker/CDN 时更新相应缓存。排查时记录片源、集数、系统/浏览器版本、是否原生全屏/投屏及错误提示。
+
+## 常见问题
+
+**黑屏或一直加载**：先用公开测试流确认播放器可运行，再检查地址、容器高度、HTTPS、CORS 和编码。不要把 HTML 播放页当 M3U8。
+
+**iPad 检测到广告却还在播放**：确认使用新发行文件且 `prepareMedia` 连接了可用服务。自建加载器不要把原始 `<source>` 加回视频，也不要删除 MMS 的 blob source。纯静态模式不能替代服务端过滤。
+
+**准备接口 401**：先在同源页面登录。示例 Worker 使用 `crayon` 和 `VIEWER_PASSWORD`；自定义服务的 `authorize` 应验证宿主会话，不要把签名密钥作为前端口令。
+
+**电视 401 或链接过期**：重新准备投屏，确认服务端时钟、有效期及签名密钥未变。电视不应跳转到网页登录页。
+
+**本地能播，电视不能播**：检查电视能否访问签名链接、分片和密钥，以及编码支持；不要发送浏览器 blob 地址。
+
+**换集后进度错乱**：每集使用独立 `storageKey`，销毁旧实例，不混用不同片源或过滤前后时间轴。
+
+## 开发和发布检查
 
 ```sh
+npm ci
 npm run check
+npm run worker:types
+npm run deploy:check
+npm pack
 ```
 
-测试涵盖手势冲突、取消与速度恢复、控制条保护、投屏调用/原始 URL 与时间、延迟请求失效和原有 HLS 过滤回归。浏览器与真实电视的最终连通性需要对应设备验证。
+`npm run release` 会先完成上述构建与功能检查，再在 `release/` 生成 npm 包、静态网站包、浏览器发行包和 SHA-256 校验文件；不自动公开仓库，也不自动创建远端部署。
 
-`docs/ci-example.yml` 提供 GitHub Actions 配置示例。当前上传凭据没有 `workflow` 权限，因此未启用远程 Actions；拥有该权限后可将示例复制到 `.github/workflows/check.yml`。
+- `dist/`：ESM、CommonJS、浏览器脚本、服务端入口与类型声明。
+- `demo-dist/`：播放器网站，`build:demo` 是纯静态模式，`build:hosted` 启用同源服务。
+- `examples/cloudflare/worker.mjs`：独立部署示例；`examples/embed.html`：直接嵌入示例。
+- `test/`：功能、发行文件、原生/MSE、投屏、手势、时间映射与服务鉴权验证。
+- `docs/ci-example.yml`：可复制到 `.github/workflows/check.yml` 的 Actions 模板；模板存在不代表远端检查已启用。
 
-网站使用 `packages/crayon-player/src` 中的相同源文件。修改独立仓库后，在网站目录运行 `node scripts/sync-crayon-player.mjs` 同步，避免网站和独立包行为分叉。
+自动测试和部署打包不能代替所有实体设备测试。iPad、AirPlay、Chromecast 和片源网络仍需对应设备验证。
 
-沿用原项目 CC BY-NC-SA 4.0，详见 [LICENSE](LICENSE) 和 [NOTICE.md](NOTICE.md)。
+## 许可
 
-## 服务端清单适配
-
-`prepareMedia(url, blockAds)` 返回 `{ url, type, filter }`，其中 `url` 为接收端可访问的 HTTP(S) 清单，`filter` 使用导出的 `VodAdFilterResult` 结构。配置后，开启去广告的所有 HLS 播放路径会等待准备完成再加载同一过滤清单，HLS.js 不再重复过滤；原片时间换算仍使用服务端返回的元数据。更新 HTTP 备用源时保留 MMS 的 blob source。主站的 `/api/player/prepare` 在登录验证后签发有有效期、绑定具体资源的链接；电视不需要网站 Cookie。清单、分片与密钥带 CORS，二进制分片流式返回；多轨/复杂清单仍采用保守透传，避免音画错位。此方案兼容支持相应 HLS/编码的设备，不能移除已压入正片画面的广告，也不保证识别所有片源的插播规则。参考 [WebKit 的 MSE / AirPlay 片源说明](https://webkit.org/blog/15036/how-to-use-media-source-extensions-with-airplay/) 和 [Google Cast 对自适应流 CORS 的要求](https://developers.google.com/cast/docs/web_sender/advanced)。
+采用 [CC BY-NC-SA 4.0](LICENSE)，分发时保留 [NOTICE.md](NOTICE.md) 和依赖许可证；商业使用应先确认所需授权。产品名称和界面统一为 Crayon Player，必要的来源与第三方归属集中在许可说明中。

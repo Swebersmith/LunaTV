@@ -1,5 +1,5 @@
-// Local implementation of discontinuity-group heuristics described/used by the
-// Juliang player. No remote player runtime, models or rule service is required.
+// Conservatively recognize bounded advertisement groups in VOD playlists.
+// No remote runtime, model, shared rules or reporting service is required.
 // HLS state is rebuilt separately: removing a group must not renumber implicit
 // AES-128 IVs or discard a real timestamp discontinuity in the retained movie.
 export interface VodAdRange {
