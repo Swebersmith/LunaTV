@@ -1,5 +1,6 @@
 import Artplayer from 'artplayer';
 
+import { attachFullscreen } from './fullscreen';
 import { configureInlineVideo } from './inline-video';
 import { volumeSetting } from './player-ui';
 import { crayonPlayerPlugin, EnhancementOptions } from './plugin';
@@ -20,8 +21,8 @@ export function createCrayonPlayerCore(
   const art = new Artplayer({
     ...options,
     playsInline: true,
-    fullscreen: false,
-    fullscreenWeb: true,
+    fullscreen: options.fullscreen ?? true,
+    fullscreenWeb: options.fullscreenWeb ?? true,
     moreVideoAttr: { ...options.moreVideoAttr, controls: false, playsInline: true },
     gesture: false,
     fastForward: false,
@@ -30,7 +31,7 @@ export function createCrayonPlayerCore(
     plugins: [...(options.plugins || []), crayonPlayerPlugin(enhancements)],
   });
   if (art.video) configureInlineVideo(art.video);
-  art.on?.('dblclick', () => { art.fullscreenWeb = !art.fullscreenWeb; });
+  if (art.template?.$player) attachFullscreen(art);
   art.template?.$player?.setAttribute('data-player', 'crayon-player');
   art.contextmenu?.update({
     name: 'version',

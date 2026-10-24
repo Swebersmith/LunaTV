@@ -12,6 +12,7 @@ export { attachCasting, prepareCastSdk } from './casting';
 export type { CrayonPlayerCoreOptions } from './core';
 export type { CrayonPlayerCoreOptions as PlayerOptions } from './core';
 export { createCrayonPlayerCore } from './core';
+export { toggleCrayonFullscreen } from './fullscreen';
 export type { GestureOptions } from './gestures';
 export { attachGestures } from './gestures';
 export type { MediaPreparer, PreparedMedia } from './media-client';
