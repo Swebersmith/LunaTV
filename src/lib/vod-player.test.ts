@@ -1,5 +1,7 @@
 import {
+  buildCrayonPlayerUrl,
   buildJuliangPlayerUrl,
+  CRAYON_PLAYER_ORIGIN,
   isJuliangPlayerUrl,
   readVodPlayerPreferences,
   saveVodPlayerPreferences,
@@ -75,12 +77,12 @@ it('validates and persists browser preferences without changing existing ad sett
     '{"player":"oops","entry":"__proto__","smartMatch":"false"}'
   );
   expect(readVodPlayerPreferences()).toEqual({
-    player: 'artplayer',
+    player: 'crayon',
     entry: 'main',
     smartMatch: true,
   });
   localStorage.setItem(VOD_PLAYER_STORAGE_KEY, 'bad json');
-  expect(readVodPlayerPreferences().player).toBe('artplayer');
+  expect(readVodPlayerPreferences().player).toBe('crayon');
 });
 
 it('still allows session switching when browser storage is blocked', () => {
@@ -90,7 +92,7 @@ it('still allows session switching when browser storage is blocked', () => {
   jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
     throw new Error('blocked');
   });
-  expect(readVodPlayerPreferences().player).toBe('artplayer');
+  expect(readVodPlayerPreferences().player).toBe('crayon');
   expect(() =>
     saveVodPlayerPreferences({
       player: 'juliang',
@@ -98,4 +100,58 @@ it('still allows session switching when browser storage is blocked', () => {
       smartMatch: true,
     })
   ).not.toThrow();
+});
+
+it('builds a minimal Crayon iframe URL without corrupting signed media', () => {
+  const media =
+    'https://media.example/影片/index.m3u8?token=a%2Fb%2Bcd&expires=123&name=一 二#part';
+  const result = new URL(buildCrayonPlayerUrl(media) || '');
+  expect(result.origin + result.pathname).toBe(CRAYON_PLAYER_ORIGIN + '/parse');
+  expect(result.searchParams.get('url')).toBe(media);
+  expect(result.searchParams.get('embed')).toBe('1');
+  expect(Array.from(result.searchParams.keys()).sort()).toEqual([
+    'embed',
+    'url',
+  ]);
+});
+
+it.each([
+  '',
+  '/relative.m3u8',
+  'javascript:alert(1)',
+  'data:text/html,x',
+  'https://user:secret@media.example/video.mp4',
+])('rejects invalid or credential-bearing Crayon sources: %s', (source) => {
+  expect(buildCrayonPlayerUrl(source)).toBeNull();
+});
+
+it('normalizes an existing Crayon playback link and never wraps another player page', () => {
+  const media = 'https://media.example/video.mp4?token=a%2Fb&x=1';
+  const link =
+    CRAYON_PLAYER_ORIGIN + '/?url=' + encodeURIComponent(media) + '&embed=0';
+  const result = new URL(buildCrayonPlayerUrl(link) || '');
+  expect(result.searchParams.get('url')).toBe(media);
+  expect(result.pathname).toBe('/parse');
+  expect(result.searchParams.get('embed')).toBe('1');
+  expect(buildCrayonPlayerUrl(CRAYON_PLAYER_ORIGIN + '/')).toBeNull();
+  expect(
+    buildCrayonPlayerUrl(
+      CRAYON_PLAYER_ORIGIN + '/auth/login?url=' + encodeURIComponent(media)
+    )
+  ).toBeNull();
+  expect(
+    buildCrayonPlayerUrl('https://jimaoys99.com/s/movie?episode=2')
+  ).toBeNull();
+});
+
+it('migrates an existing artplayer selection to the hosted Crayon option', () => {
+  localStorage.setItem(
+    VOD_PLAYER_STORAGE_KEY,
+    JSON.stringify({ player: 'artplayer', entry: 'backup2', smartMatch: false })
+  );
+  expect(readVodPlayerPreferences()).toEqual({
+    player: 'crayon',
+    entry: 'backup2',
+    smartMatch: false,
+  });
 });

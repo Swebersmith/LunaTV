@@ -34,7 +34,7 @@ export function VodPlayerSelector({
         >
           {(
             [
-              ['artplayer', 'Crayon Player'],
+              ['crayon', 'Crayon Player'],
               ['juliang', '巨量播放器'],
             ] as [VodPlayer, string][]
           ).map(([player, label]) => (
@@ -42,7 +42,7 @@ export function VodPlayerSelector({
               key={player}
               type='button'
               aria-pressed={value.player === player}
-              disabled={fullPlayerSource && player === 'artplayer'}
+              disabled={fullPlayerSource && player === 'crayon'}
               onClick={() => onChange({ ...value, player })}
               className={`rounded-lg px-3 py-2 text-sm font-medium transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 ${
                 value.player === player
@@ -89,17 +89,17 @@ export function VodPlayerSelector({
                 智能匹配线路
               </label>
             )}
-            {externalUrl && (
-              <a
-                href={externalUrl}
-                target='_blank'
-                rel='noopener noreferrer'
-                className='inline-flex items-center gap-1.5 rounded-lg px-2 py-2 text-sm font-medium text-green-700 hover:bg-green-50 dark:text-green-300 dark:hover:bg-green-950'
-              >
-                <ExternalLink size={15} aria-hidden='true' /> 独立打开
-              </a>
-            )}
           </>
+        )}
+        {externalUrl && (
+          <a
+            href={externalUrl}
+            target='_blank'
+            rel='noopener noreferrer'
+            className='inline-flex items-center gap-1.5 rounded-lg px-2 py-2 text-sm font-medium text-green-700 hover:bg-green-50 dark:text-green-300 dark:hover:bg-green-950'
+          >
+            <ExternalLink size={15} aria-hidden='true' /> 独立打开
+          </a>
         )}
       </div>
       {value.player === 'juliang' ? (
@@ -120,29 +120,38 @@ export function VodPlayerSelector({
             系统视频全屏不显示画面遮挡，可用「独立打开」保留网页播放器的遮挡功能。
           </p>
           <p>
-            巨量自行管理进度、广告规则与连播，进度不会同步到本站；本站片头片尾配置仅用于 Crayon Player。开启智能匹配后，巨量可能切换到其他线路或集数。
+            巨量自行管理进度、广告规则与连播，进度不会同步到本站。开启智能匹配后，巨量可能切换到其他线路或集数。
           </p>
         </details>
       ) : (
-        <p className='text-xs text-gray-500 dark:text-gray-400'>
-          左侧双击快退、中间双击暂停/继续、右侧双击快进；长按加速，右侧上下滑动调音量，设置中也可手动调节。支持投屏与观看进度、自动连播、片头片尾设置。
-        </p>
+        <div className='space-y-1 text-xs leading-6 text-gray-500 dark:text-gray-400'>
+          <p>
+            使用独立 Crayon
+            Player。首次使用请在播放器内输入访问密码；如登录受浏览器限制，可点击「独立打开」。
+          </p>
+          <p>
+            进度、片头片尾、去广告和投屏由播放器自行管理，进度不会同步到本站；请使用本站选集面板切换集数。
+          </p>
+        </div>
       )}
     </div>
   );
 }
 
-export function JuliangPlayer({
+export function EmbeddedVodPlayer({
+  player,
   url,
   title,
 }: {
+  player: VodPlayer;
   url: string | null;
   title: string;
 }) {
+  const name = player === 'crayon' ? 'Crayon Player' : '巨量播放器';
   // The parent keys by URL, releasing the old iframe and its media on each switch.
-  const [status, setStatus] = useState<
-    'connecting' | 'loaded' | 'slow' | 'error'
-  >('connecting');
+  const [status, setStatus] = useState<'connecting' | 'loaded' | 'slow'>(
+    'connecting'
+  );
   useEffect(() => {
     const timer = setTimeout(
       () => setStatus((value) => (value === 'connecting' ? 'slow' : value)),
@@ -155,16 +164,16 @@ export function JuliangPlayer({
       {url ? (
         <iframe
           src={url}
-          title={`巨量播放器 · ${title}`}
-          allow='autoplay; fullscreen; picture-in-picture'
+          title={`${name} · ${title}`}
+          allow='autoplay; fullscreen; picture-in-picture; encrypted-media; screen-wake-lock'
           allowFullScreen
+          referrerPolicy='no-referrer'
           className='min-h-0 w-full flex-1 border-0'
           onLoad={() => setStatus('loaded')}
-          onError={() => setStatus('error')}
         />
       ) : (
         <p role='alert' className='m-auto px-6 text-sm text-white'>
-          当前地址无法交给巨量播放，请选择其他播放源。
+          当前地址无法交给{name}播放，请选择其他播放源。
         </p>
       )}
       {url && (
@@ -173,9 +182,13 @@ export function JuliangPlayer({
           className='shrink-0 px-3 py-1.5 text-center text-xs leading-5 text-gray-300'
         >
           {status === 'connecting'
-            ? '正在连接巨量播放器…'
+            ? `正在连接${name}…`
             : status === 'loaded'
-            ? '未出画面时，请点击播放器内的播放按钮，或切换备用入口。'
+            ? player === 'crayon'
+              ? '若显示登录页，请输入访问密码；未出画面时可点击播放器内的播放按钮或独立打开。'
+              : '未出画面时，请点击播放器内的播放按钮，或切换备用入口。'
+            : player === 'crayon'
+            ? '播放器连接较慢或不可用，请独立打开、刷新页面或切换巨量播放器。'
             : '入口连接较慢或不可用，请切换备用入口、独立打开或使用 Crayon Player。'}
         </p>
       )}

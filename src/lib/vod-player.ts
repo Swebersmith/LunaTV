@@ -1,5 +1,7 @@
-export type VodPlayer = 'artplayer' | 'juliang';
+export type VodPlayer = 'crayon' | 'juliang';
 export type JuliangEntry = 'main' | 'backup1' | 'backup2';
+
+export const CRAYON_PLAYER_ORIGIN = 'https://crap.webber.qzz.io';
 
 export const JULIANG_ENTRIES: Record<
   JuliangEntry,
@@ -20,7 +22,7 @@ export interface VodPlayerPreferences {
 
 export function readVodPlayerPreferences(): VodPlayerPreferences {
   const defaults: VodPlayerPreferences = {
-    player: 'artplayer',
+    player: 'crayon',
     entry: 'main',
     smartMatch: true,
   };
@@ -29,7 +31,8 @@ export function readVodPlayerPreferences(): VodPlayerPreferences {
       localStorage.getItem(VOD_PLAYER_STORAGE_KEY) || '{}'
     );
     return {
-      player: saved?.player === 'juliang' ? 'juliang' : 'artplayer',
+      // Existing artplayer preferences now select the hosted Crayon player.
+      player: saved?.player === 'juliang' ? 'juliang' : 'crayon',
       entry:
         saved?.entry === 'backup1' || saved?.entry === 'backup2'
           ? saved.entry
@@ -70,6 +73,22 @@ export function isJuliangPlayerUrl(raw: string): boolean {
     ) &&
     (url.pathname === '/parse' || url.pathname.startsWith('/s/'))
   );
+}
+
+export function buildCrayonPlayerUrl(mediaUrl: string): string | null {
+  const source = parseMediaUrl(mediaUrl);
+  if (!source || isJuliangPlayerUrl(mediaUrl)) return null;
+  // Preserve complete Crayon links instead of passing a player page as media.
+  if (source.origin === CRAYON_PLAYER_ORIGIN) {
+    if (!['/', '/parse', '/parse/'].includes(source.pathname)) return null;
+    const media = source.searchParams.get('url');
+    if (!media || !parseMediaUrl(media)) return null;
+    mediaUrl = media;
+  }
+  const player = new URL('/parse', CRAYON_PLAYER_ORIGIN);
+  player.searchParams.set('url', mediaUrl);
+  player.searchParams.set('embed', '1');
+  return player.href;
 }
 
 export function buildJuliangPlayerUrl(
